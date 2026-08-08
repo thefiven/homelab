@@ -21,15 +21,15 @@ produced.
 **Tutorial** and **how-to** are empty and stay empty until the platform is
 built. Both are learning by doing or documenting a task against a system that
 runs; neither can be written honestly against a design that exists only on
-paper. "Building the platform is a separate effort" (this map's own
+paper. "Building the platform is a separate effort" (#4's own
 Destination) applies here without exception.
 
 **Explanation** is the one quadrant that does not need a running system, only
-a settled design, so it starts once this map closes, when every structural
+a settled design, so it starts once #4 closes, when every structural
 decision carries an accepted ADR, not before and not deferred to the build
 effort alongside tutorial and how-to. Writing it earlier would explain a
 design still changing under it; writing it only once the platform exists
-would waste the map's own output; the map's decisions and their reasoning are
+would waste #4's own output; its decisions and their reasoning are
 already the raw material explanation turns into prose written to be read
 start to finish, which is the "learned from and presented" objective this
 project's standing constraints name.
@@ -39,6 +39,7 @@ project's standing constraints name.
 `docs/adr/` stays outside the four quadrants, an append-only journal, the
 arrangement inherited from the prior iteration and confirmed here rather than
 changed by default. None of the four modes fit it: it does not teach a task
+by doing (not a tutorial), it does not document a task on a running system
 (not a how-to), it does not describe a system as it currently stands (not a
 reference), and it is not prose written to be read start to finish (not an
 explanation, though explanation draws on it as raw material). An ADR is a
@@ -84,7 +85,7 @@ a table of licenses fixed in advance for services not yet chosen.
 ## Decision
 
 `docs/reference/` continues as the only populated quadrant today. Explanation
-starts when this map closes; tutorial and how-to wait for the platform to
+starts when #4 closes; tutorial and how-to wait for the platform to
 exist. `docs/adr/` stays outside the four quadrants as its own journal. A
 how-to is written as a generalized procedure from its first draft, never a
 sanitized transcript. Alternatives rejected is a required section of every
@@ -117,8 +118,8 @@ has exactly one place that changes on every decision.
 ## Consequences
 
 - `docs/explanation/` (or an equivalent root-level layout) is created once
-  this map closes, drawing on the accepted ADRs as source material rather
-  than restating this ADR's own findings, which are the map's own reasoning.
+  #4 closes, drawing on the accepted ADRs as source material rather than
+  restating this ADR's own findings, which are #4's own reasoning.
 - Every future ADR is now expected to carry a substantive Alternatives
   rejected section; a thin one is a gap in this repository's only record of
   what did not work, not a stylistic choice.
