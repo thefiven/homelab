@@ -27,8 +27,9 @@ ADR treats them separately.
 
 ## The UPS is deferred
 
-An entry-level UPS (roughly 80 to 120 EUR, 15 to 25 minutes of runtime on a
-600VA unit) would convert a power loss into a signalled event: paired with
+A low-cost entry-level UPS, a rough market estimate rather than a price
+checked against any specific model, would convert a power loss into a
+signalled event: paired with
 NUT (Network UPS Tools), it gives the host a warning and a window to run an
 actual ordered shutdown before the battery empties.
 
@@ -41,6 +42,10 @@ equivalent forcing argument today. It becomes the first purchase when budget
 appears, or sooner if the risk below stops being acceptable in practice.
 
 ## The accepted risk
+
+This machine is this platform's single point of failure: one Ryzen 5 5600X
+box, no second node, no clustering to fail over to. Power loss is a risk to
+that one machine, not to one workload among several.
 
 #15 already found, in writing from Kingston, that the NV2 drives are "not
 intended for server environments." Power loss is the sharpest edge of that
@@ -69,10 +74,15 @@ made here.
 An administrator-triggered shutdown or reboot relies on `systemd`'s native
 unit ordering and its own timeout and `SIGKILL` escalation, not a custom
 script. Nothing about this platform's requirements justifies reimplementing
-what `systemd` already does for free. Graceful termination of containerized
-workloads, drain order, in-flight request handling, follows whichever
-orchestrator #21 settles on; it is that orchestrator's concern once chosen,
-not a sequence to design here in its absence.
+what `systemd` already does for free. Idempotence, the other half of what the
+ticket asked to settle, falls out of that choice rather than needing its own
+design: `systemd` tracks each unit's actual state, so stopping an
+already-stopped unit or re-running a shutdown that failed partway is a no-op
+for whatever already succeeded, not a retry that redoes it. Graceful
+termination of containerized workloads, drain order, in-flight request
+handling, follows whichever orchestrator #21 settles on; it is that
+orchestrator's concern once chosen, not a sequence to design here in its
+absence.
 
 ## Decision
 
@@ -104,7 +114,4 @@ termination semantics.
   its flash translation table is a full-drive event, not a per-file one, and
   no mitigation available at zero budget closes that gap.
 - Administrator-triggered shutdowns need no new tooling: `systemd` unit
-  ordering is the mechanism, today and after #21.
-- The risk register (still fogged, pending the foundation, storage and power
-  decisions) inherits this as a named entry rather than a gap to discover
-  later.
+  ordering and its native idempotence are the mechanism, today and after #21.
