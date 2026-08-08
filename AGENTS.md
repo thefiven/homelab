@@ -4,11 +4,15 @@ Working conventions for agents on this repository.
 
 ## Approach
 
-- Read existing files before writing. Don't re-read unless changed.
+- Read existing files before writing. Don't re-read within the same turn
+  unless something else (a hook, another agent, a git operation) may have
+  changed it since.
 - Thorough in reasoning, concise in output.
-- Skip files over 100KB unless required.
+- Skip files over 100KB unless the task needs their content directly: a
+  citation, a conflict check, a direct question about that file.
 - No sycophantic openers or closing fluff.
-- No emojis or em-dashes.
+- No emojis or em-dashes in new prose. Existing docs that already use them
+  (the research notes, ADR-0001, ADR-0002) are not retrofitted.
 - Do not guess APIs, versions, flags, commit SHAs, or package names. Verify by reading code or docs before asserting.
 
 ## Language
