@@ -25,6 +25,8 @@ pp. 20-36).
 | Extreme Memory Profile (X.M.P.) | Tweaker | Disabled | **Disabled (confirm)** | No ADR asks for a memory overclock. ADR-0002's binding constraint is RAM capacity, not bandwidth, and stability outranks speed on the single node ADR-0005 already carries a named, accepted power-loss corruption risk for |
 | Global C-state Control / AMD Cool'n'Quiet / Power Supply Idle Control | Tweaker → Advanced CPU Settings | Auto / Enabled / Auto | Leave at default | #27 engineers heat and noise at the cooling hardware, not by limiting uptime. Idle CPU power-scaling doesn't compete with that decision — it's free efficiency during the large fraction of each day the box is idle, not a mechanism this project relies on |
 | Initial Display Output | Settings → IO Ports | PCIe 1 Slot | PCIe 1 Slot (confirm) | Already the discrete-GPU default. ADR-0003 keeps this output specifically for unattended-boot diagnosis, so it's confirmed rather than assumed |
+| LEDs in System Power On State | Settings → Miscellaneous | On | **Off** | Board RGB has no diagnostic value and this box runs 24/7 in an office — light nobody wants overnight is pure downside |
+| LEDs in Sleep, Hibernation, and Soft Off States | Settings → Miscellaneous | Off | Off (moot) | Only reachable when the item above is On; with that Off, this one is unreachable and stays at its already-Off default |
 
 ## Fan curve (CPU/case fans)
 
@@ -75,6 +77,9 @@ to notice a throttle.
 - **Any AMD CBS / AGESA sub-screen not itemized in the vendor manual.** The
   manual documents it exists but not its contents; visit only if a specific
   setting is later needed.
+- **GPU or case-strip lighting, if any.** The BIOS toggle above only reaches
+  onboard motherboard LEDs; a discrete GPU's own lighting or third-party ARGB
+  strips need their own switch or vendor software, out of BIOS's reach.
 
 ## Source
 
