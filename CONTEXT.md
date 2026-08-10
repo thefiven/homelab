@@ -73,5 +73,7 @@ construction; a lost drive is a reinstall, not a restore.
 
 **State pool**:
 The ZFS pool holding what no rebuild recreates — application databases and
-Immich's generated derivatives. What #23's backup and recovery strategy targets.
+Immich's generated derivatives. Of these, only the application databases are
+what #23's backup and recovery strategy targets (ADR-0012); the derivatives
+are excluded as regenerable from the originals.
 _Avoid_: data disk, data pool
