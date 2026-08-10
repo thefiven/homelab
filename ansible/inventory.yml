@@ -1,0 +1,10 @@
+# Node inventory for this platform.
+#
+# ansible_host is a router-side DHCP reservation, not chosen here (ADR-0013,
+# gesture 5): once a node boots and its MAC address appears on the LAN,
+# reserve its IP on the router, then replace the placeholder below with the
+# reserved address.
+all:
+  hosts:
+    node1:
+      ansible_host: 192.0.2.1 # placeholder (RFC 5737 TEST-NET-1) — not reachable
