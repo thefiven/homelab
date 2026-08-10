@@ -9,7 +9,7 @@
   roles:
     - base        # packages, SSH, chrony, unattended-upgrades, GRUB, ESP/ZFS mount-order fix
     - zfs         # state-pool creation, ARC cap, scheduled trim
-    # - tailscale   # enrollment
+    - tailscale   # enrollment
     # - nvidia      # driver
     # - k3s         # server mode (node 1) / agent mode + live token fetch (later nodes)
     # - nfs-client  # NAS mounts

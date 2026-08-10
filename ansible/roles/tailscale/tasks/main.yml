@@ -1,0 +1,114 @@
+# Role `tailscale`: enroll this node onto the tailnet for remote management
+# access (#67). Every task reads real state before acting, the same
+# discipline as `base` and `zfs`, so a second run against an
+# already-enrolled node reports changed=0 instead of re-running `tailscale
+# up` on every play.
+
+- name: Assert that the Tailscale auth key is set
+  ansible.builtin.assert:
+    that:
+      - tailscale_authkey is defined
+      - tailscale_authkey | length > 0
+    fail_msg: >-
+      tailscale_authkey is not set. This role never ships a default for it
+      (see defaults/main.yml); generate a reusable, pre-approved key in the
+      Tailscale admin console and set it in inventory or host_vars before
+      running against a real host.
+
+# Exact URL shape (source: pkgs.tailscale.com's own install script) —
+# {track}/{os}/{codename}.noarmor.gpg for the keyring, matching
+# .tailscale-keyring.list below. ansible_distribution_release is Ansible's
+# own codename fact (e.g. "noble"), so this never needs updating by hand
+# when the fleet moves to a newer Ubuntu release.
+#
+# force: true because get_url's default only downloads once and then trusts
+# the file on disk forever (ansible-doc: "the file will only be downloaded
+# if the destination does not exist") — with the default, a node's local
+# keyring would never pick up a real Tailscale key rotation. Forcing a fetch
+# every run still reports changed=0 on a second run: get_url only rewrites
+# the file, and therefore only reports changed, when the downloaded content
+# actually differs from what's already there.
+- name: Install the Tailscale signing key
+  ansible.builtin.get_url:
+    url: "https://pkgs.tailscale.com/{{ tailscale_track }}/ubuntu/{{ ansible_distribution_release }}.noarmor.gpg"
+    dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
+    owner: root
+    group: root
+    mode: "0644"
+    force: true
+
+- name: Install the Tailscale apt repository
+  ansible.builtin.get_url:
+    url: "https://pkgs.tailscale.com/{{ tailscale_track }}/ubuntu/{{ ansible_distribution_release }}.tailscale-keyring.list"
+    dest: /etc/apt/sources.list.d/tailscale.list
+    owner: root
+    group: root
+    mode: "0644"
+    force: true
+  register: tailscale_repo_file
+
+# Only refresh the apt cache when the repo file itself just changed —
+# cheaper than base's time-boxed cache_valid_time, and exact rather than
+# approximate, since the one thing that actually invalidates this cache is
+# the repo definition changing.
+- name: Install the tailscale package
+  ansible.builtin.apt:
+    name: tailscale
+    state: present
+    update_cache: "{{ tailscale_repo_file.changed }}"
+
+- name: Enable and start the tailscaled service
+  ansible.builtin.systemd_service:
+    name: tailscaled
+    enabled: true
+    state: started
+
+- name: Read the current Tailscale backend state
+  ansible.builtin.command:
+    cmd: tailscale status --json
+  register: tailscale_status
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# BackendState is "Running" once logged in and enrolled; anything else
+# (NeedsLogin on a fresh install, Stopped, or the command failing outright
+# because tailscaled just started) means this node still needs `up`. Gating
+# on that, rather than always running `tailscale up`, is what makes the
+# second run a no-op and avoids re-presenting a reusable key to a command
+# that doesn't need it.
+- name: Enroll this node in the tailnet if it needs it
+  when: >-
+    tailscale_status.rc != 0 or
+    (tailscale_status.stdout | from_json).BackendState != 'Running'
+  block:
+    # `tailscale up --auth-key=<value>` would put the key straight into this
+    # process's argv, readable by anyone on the host who can list processes
+    # (`ps`, /proc) for as long as the command runs. `--auth-key=file:<path>`
+    # is `tailscale up`'s own built-in alternative for exactly this: the key
+    # never appears on the command line, only a path does.
+    - name: Write the auth key to a private temporary file
+      ansible.builtin.tempfile:
+        state: file
+        suffix: tailscale-authkey
+      register: tailscale_authkey_file
+
+    - name: Populate the temporary auth key file
+      ansible.builtin.copy:
+        dest: "{{ tailscale_authkey_file.path }}"
+        content: "{{ tailscale_authkey }}"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+    - name: Run tailscale up
+      ansible.builtin.command:
+        cmd: "tailscale up --auth-key=file:{{ tailscale_authkey_file.path }}"
+      changed_when: true
+  always:
+    - name: Remove the temporary auth key file
+      ansible.builtin.file:
+        path: "{{ tailscale_authkey_file.path }}"
+        state: absent
+      when: tailscale_authkey_file.path is defined
