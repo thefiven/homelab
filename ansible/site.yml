@@ -1,17 +1,15 @@
 ---
 # Master playbook (ADR-0013, gesture 7): ansible-playbook site.yml -l <host>
 #
-# Role list is ADR-0013's decision; none are written yet. Uncomment each as
-# it's authored — this file is the template they land in, not a stub to
-# replace.
+# Role list is ADR-0013's decision. Uncomment each remaining role as it's
+# authored, this file is the template they land in, not a stub to replace.
 - name: Configure homelab nodes
   hosts: all
   become: true
-  roles: []
-  # roles:
-  #   - base        # packages, SSH, chrony, unattended-upgrades, GRUB, ESP/ZFS mount-order fix
-  #   - zfs         # state-pool creation, ARC cap, sanoid snapshots
-  #   - tailscale   # enrollment
-  #   - nvidia      # driver
-  #   - k3s         # server mode (node 1) / agent mode + live token fetch (later nodes)
-  #   - nfs-client  # NAS mounts
+  roles:
+    - base        # packages, SSH, chrony, unattended-upgrades, GRUB, ESP/ZFS mount-order fix
+    # - zfs         # state-pool creation, ARC cap, sanoid snapshots
+    # - tailscale   # enrollment
+    # - nvidia      # driver
+    # - k3s         # server mode (node 1) / agent mode + live token fetch (later nodes)
+    # - nfs-client  # NAS mounts

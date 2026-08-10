@@ -1,0 +1,54 @@
+# Defaults for the `base` role.
+#
+# Anything that could plausibly change lives here rather than in the tasks,
+# so it can be corrected without reading code. `base_admin_authorized_key`
+# is the one exception, deliberately absent: it is asserted in
+# tasks/main.yml instead. A placeholder public key would be inert but could
+# be mistaken for a real one to copy, and the admin key is exactly the kind
+# of thing ADR-0001 says never ships a working-looking default.
+
+# Bootstrap account created by cloud-init at install time (ADR-0013). The
+# role reasserts its shape on every run rather than trusting what the
+# installer left behind, so a later manual change does not silently survive
+# a playbook run.
+base_admin_user: admin
+base_admin_groups:
+  - sudo
+  - adm
+
+# Packages every node needs regardless of its role. Keep this list short:
+# anything a specialization needs belongs to that specialization's own role.
+base_packages:
+  - ca-certificates
+  - chrony
+  - curl
+  - gnupg
+  - htop
+  - jq
+  - tmux
+  - unattended-upgrades
+  - vim
+
+# ESP mount options after the fix below. `nofail` is the fix, not a
+# precaution, see the task's comment for why.
+base_esp_mount_options: defaults,nofail,x-systemd.after=zfs-mount.service
+
+# On a ZFS-root EFI install, GRUB_TIMEOUT_STYLE and GRUB_TIMEOUT are
+# overridden unconditionally by /etc/grub.d/00_header before they ever
+# reach the menu, see the task's comment for the mechanism. They are set
+# anyway to record the intent and to take effect again if `/boot` ever
+# leaves ZFS.
+base_grub_timeout_style: hidden
+base_grub_timeout: 1
+
+# This is the value that actually governs the menu on this layout. It was
+# only ever an invisible Ubuntu default; setting it explicitly makes it
+# something the repository states and can be discussed, not a fact hidden in
+# a package's postinst script.
+base_grub_recordfail_timeout: 30
+
+# RFC 5737 TEST-NET-1, same placeholder convention as inventory.yml. The
+# real LAN subnet is a designator under ADR-0001 and never lands in this
+# repository; a real deployment overrides this at runtime (`-e`) or from an
+# uncommitted host_vars file, never from a committed default.
+base_ntp_serve_subnet: 192.0.2.0/24

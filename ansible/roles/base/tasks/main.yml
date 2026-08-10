@@ -1,0 +1,161 @@
+# Role `base`: what a node must be before any specialization touches it.
+#
+# Every task describes a state, never a gesture. That is what makes the
+# playbook safe to rerun without guessing what it will break, and it is the
+# condition for ADR-0002's reconstructibility promise to be true rather than
+# merely written down.
+
+- name: Assert that the admin key is set
+  ansible.builtin.assert:
+    that:
+      - base_admin_authorized_key is defined
+      - base_admin_authorized_key | length > 0
+    fail_msg: >-
+      base_admin_authorized_key is not set. This role never ships a default
+      for it (see defaults/main.yml); set it in inventory or host_vars
+      before running against a real host.
+
+# `safe` (apt-get upgrade), not `dist` (apt-get full-upgrade): it applies
+# every pending update, security included, without ever removing a package
+# to do it. A freshly provisioned node should not sit on day-one
+# vulnerabilities waiting for the nightly unattended-upgrades timer.
+- name: Install the base packages and apply pending upgrades
+  ansible.builtin.apt:
+    name: "{{ base_packages }}"
+    state: present
+    upgrade: safe
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Ensure the administration account exists
+  ansible.builtin.user:
+    name: "{{ base_admin_user }}"
+    groups: "{{ base_admin_groups }}"
+    append: true
+    shell: /bin/bash
+    state: present
+
+# `exclusive` is the point of this task, not a detail: it declares that this
+# key is the only door into the machine, not merely one more key added to
+# it. A key left over from some earlier troubleshooting disappears on the
+# next run instead of quietly persisting.
+- name: Authorize the administration key, and only it
+  ansible.posix.authorized_key:
+    user: "{{ base_admin_user }}"
+    key: "{{ base_admin_authorized_key }}"
+    state: present
+    exclusive: true
+
+# Named `99-` to be read after the file cloud-init drops: in sudoers, the
+# last matching rule wins. Without it, Ansible loses `become` the moment the
+# installer's own sudo grant is tightened, and the account is locked, so
+# there is no password fallback to recover with.
+- name: Grant passwordless sudo to the administration account
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/99-homelab-admin
+    content: "{{ base_admin_user }} ALL=(ALL) NOPASSWD:ALL\n"
+    owner: root
+    group: root
+    mode: "0440"
+    validate: visudo -cf %s
+
+- name: Harden the SSH server
+  ansible.builtin.template:
+    src: sshd-homelab.conf.j2
+    dest: /etc/ssh/sshd_config.d/10-homelab.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Reload sshd
+
+- name: Serve time to the local subnet
+  ansible.builtin.template:
+    src: chrony-homelab.conf.j2
+    dest: /etc/chrony/conf.d/homelab.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart chrony
+
+- name: Enable unattended security upgrades
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+    owner: root
+    group: root
+    mode: "0644"
+
+# An unsolicited reboot would take every workload down without warning, on
+# a single-node cluster nobody is watching overnight. It would also undo the
+# ESP mount-order fix below until that fix has run again.
+- name: Never reboot automatically after an unattended upgrade
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/52homelab-no-auto-reboot
+    content: |
+      Unattended-Upgrade::Automatic-Reboot "false";
+    owner: root
+    group: root
+    mode: "0644"
+
+# `local-fs.target` can become active before `zfs-mount.service`, even
+# though the unit declares `Before=local-fs.target`: that declaration only
+# orders two units when both belong to the same transaction, which is not
+# guaranteed here. When ZFS wins that race, it mounts /boot after the ESP
+# is already mounted at /boot/efi and buries it: the path then resolves
+# inside the ZFS dataset, where grub-install and shim updates write into
+# nothing while reporting success.
+#
+# `nofail` is the fix, not a precaution. Without it, local-fs.target
+# requires this mount and waits on it; adding an ordering dependency on
+# zfs-mount.service on top of that would close a loop that blocks boot
+# without leaving a trace, since the persistent journal is only writable
+# once local-fs.target is reached. With `nofail`, systemd stops requiring
+# and ordering the mount before the target, which is what lets
+# `x-systemd.after=` place it after ZFS instead.
+#
+# The cost of `nofail`: a failed mount no longer blocks boot, so it no
+# longer announces itself either. The invariant "/boot/efi is mounted and
+# vfat" has to be a monitoring check, not an assumption boot itself enforces.
+- name: Mount the ESP only after ZFS has mounted /boot
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '^(\S+\s+/boot/efi\s+\S+\s+)\S+(\s+\d+\s+\d+)$'
+    replace: '\g<1>{{ base_esp_mount_options }}\g<2>'
+    validate: findmnt --verify --tab-file %s
+  notify: Reload systemd
+
+# The regexp above matches nothing on an /etc/fstab line shaped differently
+# than expected (extra whitespace, a missing field) and the replace task
+# still reports success either way: this is the loud check that catches
+# that silent no-op, instead of the fix quietly never having applied.
+- name: Confirm the ESP mount-order fix is in place
+  ansible.builtin.command:
+    cmd: grep -qE '\s/boot/efi\s+\S+\s+\S*nofail\S*\s' /etc/fstab
+  changed_when: false
+
+- name: Hide the GRUB menu
+  ansible.builtin.lineinfile:
+    path: /etc/default/grub
+    regexp: "^GRUB_TIMEOUT_STYLE="
+    line: "GRUB_TIMEOUT_STYLE={{ base_grub_timeout_style }}"
+  notify: Update grub
+
+- name: Set the GRUB timeout
+  ansible.builtin.lineinfile:
+    path: /etc/default/grub
+    regexp: "^GRUB_TIMEOUT="
+    line: "GRUB_TIMEOUT={{ base_grub_timeout }}"
+  notify: Update grub
+
+# This is the setting that actually governs the menu on this layout, not
+# the two above, see defaults/main.yml. It only ever existed as an invisible
+# Ubuntu default before this task made it explicit.
+- name: Set the duration of the menu EFI forces on a ZFS /boot
+  ansible.builtin.lineinfile:
+    path: /etc/default/grub
+    regexp: "^#?GRUB_RECORDFAIL_TIMEOUT="
+    line: "GRUB_RECORDFAIL_TIMEOUT={{ base_grub_recordfail_timeout }}"
+  notify: Update grub

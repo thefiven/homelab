@@ -1,0 +1,13 @@
+# Managed by Ansible, role `base`. Manual edits are overwritten.
+#
+# Named `10-` to be read before cloud-init's `50-cloud-init.conf`: sshd
+# keeps the first value it sees for a given directive, so this file has the
+# final say over whatever the installer left behind.
+#
+# The key this role authorizes is the only way into the machine: the root
+# account is locked and there is no password to fall back on.
+
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+PubkeyAuthentication yes
