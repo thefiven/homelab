@@ -1,0 +1,19 @@
+# Defaults for the `tailscale` role.
+#
+# `tailscale_authkey` is deliberately absent, same reasoning as
+# `base_admin_authorized_key` and `zfs_state_disk_serial`: a working-looking
+# placeholder here is more dangerous than an assertion failure. Generate a
+# reusable, pre-approved key in the Tailscale admin console
+# (https://login.tailscale.com/admin/settings/keys).
+#
+# ADR-0009's SOPS+age encryption only covers Kubernetes Secret values Flux
+# decrypts in-cluster; it has no Ansible-side counterpart in this repo (no
+# .sops.yaml entry, no community.sops in requirements.yml). Same rule as
+# base_ntp_serve_subnet in the `base` role: supply the real value at runtime
+# (`-e`) or from an uncommitted host_vars file, never from a committed
+# default.
+
+# Release channel pkgs.tailscale.com serves the signing key and apt repo
+# from. "stable" is the only channel this platform has ever needed;
+# "unstable" exists upstream for pre-releases, not something run here.
+tailscale_track: stable
