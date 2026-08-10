@@ -1,0 +1,5 @@
+# Collections the roles in this tree depend on, beyond ansible-core.
+# Install with: ansible-galaxy collection install -r ansible/requirements.yml
+---
+collections:
+  - name: ansible.posix

@@ -1,0 +1,7 @@
+# Managed by Ansible, role `base`. Manual edits are overwritten.
+#
+# Serves time to the LAN so that any device with no route to a public NTP
+# server (no gateway, no DNS) still has a clock to sync against, and so
+# that timestamps across the platform's own logs stay correlated.
+
+allow {{ base_ntp_serve_subnet }}
