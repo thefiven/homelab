@@ -1,0 +1,57 @@
+# Defaults for the `zfs` role.
+#
+# This role only ever touches the state pool. ADR-0010's system pool is the
+# ZFS root the installer's autoinstall already lays down (ADR-0013, gesture
+# 3-4) — by the time this role runs, it exists and needs no creation step.
+
+# Matches ADR-0010's naming (the "state pool"). Change only if a real host
+# needs a different name; the disk-serial guard below is what actually
+# protects against writing to the wrong drive, not this string.
+zfs_state_pool: state
+
+# The `ID_SERIAL` of the NVMe that becomes the state pool (ADR-0013's
+# serial-based disk disambiguation). No default, deliberately absent, same
+# reasoning as `base_admin_authorized_key` in the `base` role — a
+# working-looking placeholder here is more dangerous than an assertion
+# failure, since a wrong guess would `zpool create` over the wrong disk.
+# Set in inventory or host_vars before running against a real host.
+
+# #18's resource budget pins the ZFS ARC at 5 GiB, well under the OpenZFS
+# >=2.3.0 default (31 GiB on this 32 GiB machine) that would otherwise starve
+# every other workload. This is a systemwide module parameter, not a
+# per-pool one — it governs the system pool's ARC usage too.
+zfs_arc_max_bytes: 5368709120
+
+# Root-of-pool properties, applied at `zpool create` time with `-O`.
+# `atime=on`/`relatime=on` is ADR-0010's "relatime=on elsewhere" baseline;
+# the datasets below override `atime=off` where the ADR calls for it.
+# No `log` or `cache` vdev is configured anywhere in this role — that
+# omission, not a property, is what ADR-0010 means by "no log/cache vdev".
+zfs_state_pool_root_properties:
+  atime: "on"
+  relatime: "on"
+
+# Datasets ADR-0010's table names explicitly: Immich's Postgres (+
+# VectorChord), any other app database holding user-generated state, and
+# Immich's generated derivatives (thumbs/, encoded-video/). Recordsize 32K
+# on the database datasets is OpenZFS's own PostgreSQL tuning guidance;
+# `copies=2` is scoped to the Immich database alone, the one slice ADR-0010
+# names irreplaceable. Everything else the ADR mentions (observability,
+# the model cache, profile/backups/) has its exact dataset boundary left to
+# whichever ticket actually installs that workload, per the ADR's own
+# "left to the installing ticket" — creating a placeholder dataset for a
+# workload that doesn't exist yet would be guessing at a boundary nothing
+# needs guessed yet.
+zfs_state_datasets:
+  - name: immich-db
+    properties:
+      recordsize: "32K"
+      atime: "off"
+      copies: "2"
+  - name: app-db
+    properties:
+      recordsize: "32K"
+      atime: "off"
+  - name: immich-derivatives
+    properties:
+      atime: "off"

@@ -1,0 +1,13 @@
+# Handlers only fire after an actual change, which is what makes a second
+# run of the playbook genuinely silent (changed=0).
+
+# The root filesystem is ZFS, so the module — and any `zfs_arc_max` baked
+# into `/etc/modprobe.d/` — is loaded by the initramfs, before
+# `/etc/modprobe.d/` is even readable. Without this, the cap in
+# `/etc/modprobe.d/zfs.conf` would only start governing the ARC on the
+# *next* reboot, silently — the live `sysfs` write in tasks/main.yml is what
+# covers the gap until then.
+- name: Update initramfs
+  ansible.builtin.command:
+    cmd: update-initramfs -u
+  changed_when: true

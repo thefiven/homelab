@@ -1,0 +1,289 @@
+# Role `zfs`: create ADR-0010's state pool, cap the ARC, and schedule trim.
+#
+# This is the most dangerous role in the playbook — the only one that writes
+# to a partition table. Every task below is written so that a second run, or
+# a run against a misidentified machine, destroys nothing: ADR-0010 names
+# the state pool as carrying the platform's one irreplaceable slice
+# (Immich's Postgres database), and no mirror exists here to absorb a
+# mistake.
+#
+# The system pool is out of scope: it is the ZFS root the installer's
+# autoinstall already creates (ADR-0013, gesture 3-4), not something this
+# role brings into existence.
+
+- name: Assert that the state disk's serial number is set
+  ansible.builtin.assert:
+    that:
+      - zfs_state_disk_serial is defined
+      - zfs_state_disk_serial | string | length > 0
+    fail_msg: >-
+      zfs_state_disk_serial is not set. This role never ships a default for
+      it (see defaults/main.yml); read the serial off the real disk with
+      `udevadm info` and set it in inventory or host_vars before running
+      against a real host.
+
+- name: Install the ZFS userland
+  ansible.builtin.apt:
+    name: zfsutils-linux
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# `ID_SERIAL` is the one discriminant ADR-0013 trusts to survive a disk
+# being moved to a different slot or enumerated in a different order.
+# `/dev/disk/by-id/` is what `zpool create` should receive too, for the same
+# reason — `/dev/nvmeXn1` is what ZFS would otherwise cache and lose.
+#
+# `eui.*` links are skipped because they name the same disk again under its
+# native NVMe identifier — keeping them would double-count one piece of
+# hardware. `-part*` links are skipped because the whole disk is wanted:
+# that is what lets ZFS own the partitioning and the write cache itself.
+- name: Resolve the state disk from its serial number
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -euo pipefail
+      shopt -s nullglob
+      for link in /dev/disk/by-id/nvme-*; do
+        case "$link" in *eui.*|*-part*) continue ;; esac
+        serial=$(udevadm info --query=property --name="$link" |
+                 sed -n 's/^ID_SERIAL=//p')
+        if [ "$serial" = "{{ zfs_state_disk_serial }}" ]; then
+          printf '%s\n' "$link"
+        fi
+      done
+  register: zfs_state_disk_links
+  changed_when: false
+  check_mode: false
+
+# A serial that matches nothing means this is not the machine it's assumed
+# to be, or the disk has been replaced. Continuing would mean writing at
+# random to whatever disk happens to be left — refuse instead.
+- name: Fail unless that serial number designates a disk
+  ansible.builtin.assert:
+    that: zfs_state_disk_links.stdout_lines | length > 0
+    fail_msg: >-
+      No disk on this host has ID_SERIAL={{ zfs_state_disk_serial }}. Read
+      the real value off the machine and correct zfs_state_disk_serial
+      before rerunning.
+    quiet: true
+
+# Multiple *links* for one disk are normal — udev adds one per naming
+# convention. What must be unique is the *disk* those links resolve to.
+- name: Resolve those links down to actual disks
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: >-
+      set -euo pipefail
+      && readlink -f {{ zfs_state_disk_links.stdout_lines | map('quote') | join(' ') }}
+      | sort -u
+  register: zfs_state_disk_devices
+  changed_when: false
+  check_mode: false
+
+- name: Fail unless those links all point at the same disk
+  ansible.builtin.assert:
+    that: zfs_state_disk_devices.stdout_lines | length == 1
+    fail_msg: >-
+      {{ zfs_state_disk_serial }} designates
+      {{ zfs_state_disk_devices.stdout_lines | length }} distinct disks
+      ({{ zfs_state_disk_devices.stdout_lines | join(', ') }}). That serial is
+      not the stable discriminant it's assumed to be — nothing will be
+      written until this is resolved.
+    quiet: true
+
+- name: Remember the by-id path of the state disk
+  ansible.builtin.set_fact:
+    zfs_state_disk: "{{ zfs_state_disk_links.stdout_lines | first }}"
+
+- name: List the pools already imported
+  ansible.builtin.command:
+    cmd: zpool list -H -o name
+  register: zfs_imported_pools
+  changed_when: false
+  check_mode: false
+
+# Import-before-create is what makes this role safe to rerun. A pool can
+# exist on the disk without being imported — a lost cache, a moved disk, a
+# machine reinstalled on top — and in that state `zpool list` doesn't see
+# it, so a bare `zpool create` would happily overwrite it: exactly the
+# scenario that destroys the one irreplaceable dataset. A first install on a
+# blank disk fails this import, which is the nominal case, not an error —
+# the next task re-reads real state rather than trusting this one's rc.
+#
+# `-d` takes the `/dev/disk/by-id` *directory*, never the whole-disk link:
+# `zpool create` on a whole disk places its labels inside partition 1, not
+# at the offsets a whole-disk probe would read. Scoping `-d` to the disk
+# link would therefore never find anything, falling through to `-f` on the
+# next task and destroying the very pool this guard exists to protect.
+#
+# No `-N`: the pool should come up *mounted*, so every later task in this
+# role sees it at its real mountpoint instead of writing beside an empty
+# directory.
+#
+# `LC_ALL=C` matters because the next task decides on stderr *text* — a
+# translated locale would never produce the expected phrase, and the role
+# would refuse to proceed even on a genuinely blank disk.
+- name: Import the state pool if it already exists on that disk
+  ansible.builtin.command:
+    cmd: zpool import -d /dev/disk/by-id {{ zfs_state_pool | quote }}
+  environment:
+    LC_ALL: C
+  register: zfs_state_import
+  failed_when: false
+  changed_when: zfs_state_import.rc == 0
+  when: zfs_state_pool not in zfs_imported_pools.stdout_lines
+
+- name: List the pools again, now that an import may have happened
+  ansible.builtin.command:
+    cmd: zpool list -H -o name
+  register: zfs_imported_pools
+  changed_when: false
+  check_mode: false
+
+# An import that fails while reporting it *saw* the pool is the dangerous
+# case: labels present but the pool unusable — a disk mid-replacement, a
+# pool version too new, a previous host that never exported it. Creating
+# over that would destroy the Postgres database. Stop instead and leave it
+# for a human to look at.
+#
+# The discriminant is the phrase "no such pool available", never whether the
+# pool's name appears in the message — ZFS writes `cannot import 'state': no
+# such pool available` for a blank disk too, so matching on the name alone
+# would mistake absence for presence and block every first install. An empty
+# stderr with a nonzero return code also fails this: against a disk that
+# might carry the one irreplaceable dataset, refusing to create is the only
+# safe response to an error this role doesn't recognize.
+- name: Fail unless the pool is simply absent from that disk
+  ansible.builtin.assert:
+    that: "'no such pool available' in (zfs_state_import.stderr | default(''))"
+    fail_msg: >-
+      zpool import did not report the pool "{{ zfs_state_pool }}" as absent,
+      but also failed to import it:
+      {{ zfs_state_import.stderr | default('') | trim }}
+      Nothing will be created over it. Diagnose by hand with
+      `zpool import -d /dev/disk/by-id`.
+    quiet: true
+  when: zfs_state_pool not in zfs_imported_pools.stdout_lines
+
+# `-f` is required, not a convenience: a state disk can carry a stale
+# non-ZFS signature from an earlier life (a previous filesystem, an old
+# partition table) that `zpool create` would otherwise refuse to write over.
+# The guard above is what makes `-f` safe here — by this point the disk has
+# already been confirmed to hold no importable pool, so the only thing `-f`
+# can be bypassing is that stale signature, never a live pool.
+#
+# `cachefile` is set explicitly, not left to the default, so the guarantee
+# that the pool survives a reboot (`zfs-import-cache.service` only mounts
+# what it finds there) is legible in this file rather than inherited from
+# Ubuntu's packaging.
+- name: Create the state pool on the bare disk
+  ansible.builtin.command:
+    cmd: >-
+      zpool create -f
+      -o ashift=12
+      -o cachefile=/etc/zfs/zpool.cache
+      {% for key, value in zfs_state_pool_root_properties.items() %}
+      -O {{ key }}={{ value }}
+      {% endfor %}
+      {{ zfs_state_pool | quote }} {{ zfs_state_disk | quote }}
+  when: zfs_state_pool not in zfs_imported_pools.stdout_lines
+  changed_when: true
+
+# Every guard above resolves *a disk* from the serial; none of them, on
+# their own, guarantee the pool this role is about to configure actually
+# lives on it. `zpool import -d /dev/disk/by-id` searches that whole
+# directory for a pool named right, not just the verified disk — and a pool
+# already imported before this role ever ran (at boot, by
+# zfs-import-cache.service) skips the create/import block above entirely,
+# with no check on which disk it came from. This is the task that closes
+# that gap, for both paths at once: whatever "{{ zfs_state_pool }}" turns
+# out to be backed by, it must resolve to the same disk the serial matched,
+# or nothing past this point is allowed to touch it.
+- name: Resolve the state pool's actual backing device
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -euo pipefail
+      zpool status -P {{ zfs_state_pool | quote }} \
+        | awk '$1 ~ /^\// { print $1 }' \
+        | xargs -r readlink -f \
+        | sort -u
+  register: zfs_state_pool_backing_devices
+  changed_when: false
+  check_mode: false
+
+- name: Fail unless the state pool is backed by the serial-matched disk
+  ansible.builtin.assert:
+    that:
+      - zfs_state_pool_backing_devices.stdout_lines | length == 1
+      - zfs_state_pool_backing_devices.stdout_lines | first == zfs_state_disk_devices.stdout_lines | first
+    fail_msg: >-
+      The pool "{{ zfs_state_pool }}" is backed by
+      {{ zfs_state_pool_backing_devices.stdout_lines | join(', ') }}, not the
+      disk resolved from zfs_state_disk_serial
+      ({{ zfs_state_disk_devices.stdout_lines | first }}). Refusing to touch
+      ARC, datasets or trim for a pool that isn't confirmed to live on the
+      serial-matched disk.
+    quiet: true
+
+# Why 5 GiB and not the OpenZFS default: defaults/main.yml.
+- name: Read the ARC cap currently in force
+  ansible.builtin.slurp:
+    src: /sys/module/zfs/parameters/zfs_arc_max
+  register: zfs_arc_max_running
+  check_mode: false
+
+# The cap applies live: the module accepts this parameter as a write, and
+# the ARC shrinks to it on its own. Without this task the value would only
+# take effect on the next reboot — exactly the install window where memory
+# is tightest.
+- name: Apply the ARC cap without waiting for a reboot
+  ansible.builtin.shell:
+    executable: /bin/sh
+    cmd: echo {{ zfs_arc_max_bytes }} > /sys/module/zfs/parameters/zfs_arc_max
+  when: zfs_arc_max_running.content | b64decode | trim | int != zfs_arc_max_bytes
+  changed_when: true
+
+- name: Persist the ARC cap across reboots
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/zfs.conf
+    content: |
+      # Managed by Ansible, role `zfs`. Manual edits are overwritten.
+      options zfs zfs_arc_max={{ zfs_arc_max_bytes }}
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Update initramfs
+
+# Handlers normally flush at the end of the play, but `zfs` runs early —
+# `tailscale`, `nvidia` and `k3s` still come after it. A failure in any of
+# them would carry the notification away unfired, leaving the modprobe.d
+# file in place with an initramfs that never picked it up: every outward
+# sign of the cap and none of its effect. Flush now, while the guarantee
+# still holds.
+- name: Rebuild the initramfs now rather than at the end of the play
+  ansible.builtin.meta: flush_handlers
+
+# ADR-0010's per-dataset recordsize/atime/copies; defaults/main.yml explains
+# which datasets exist and why. The module itself is what makes this
+# idempotent: it diffs each dataset's current properties against
+# `extra_zfs_properties` and only issues `zfs set` where they differ.
+- name: Create the state pool's datasets
+  community.general.zfs:
+    name: "{{ zfs_state_pool }}/{{ item.name }}"
+    state: present
+    extra_zfs_properties: "{{ item.properties }}"
+  loop: "{{ zfs_state_datasets }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# `zfs-trim-weekly@.timer` ships with zfsutils-linux — scheduled, not the
+# `autotrim` pool property ADR-0010 explicitly rejects for "lower-end
+# devices" per upstream's own guidance. Enabling the shipped instantiated
+# unit is the whole task; there is no custom timer to author.
+- name: Schedule trim on the state pool
+  ansible.builtin.systemd_service:
+    name: "zfs-trim-weekly@{{ zfs_state_pool }}.timer"
+    enabled: true
+    state: started
