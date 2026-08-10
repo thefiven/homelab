@@ -61,3 +61,17 @@ _Avoid_: Headroom, spare capacity
 The multiplier a storage layer may apply to the allocated write budget before the
 endurance target is missed. It is opposable to a storage decision, and refutable
 by measurement.
+
+### Storage
+
+See [ADR-0010](./docs/adr/0010-zfs-system-state-split-storage-layout.md).
+
+**System pool**:
+The ZFS pool holding everything Ansible and GitOps reconstruct from this
+repository — OS root, k3s, container images, the ML model cache. Disposable by
+construction; a lost drive is a reinstall, not a restore.
+
+**State pool**:
+The ZFS pool holding what no rebuild recreates — application databases and
+Immich's generated derivatives. What #23's backup and recovery strategy targets.
+_Avoid_: data disk, data pool
