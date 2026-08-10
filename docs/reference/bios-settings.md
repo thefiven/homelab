@@ -26,6 +26,45 @@ pp. 20-36).
 | Global C-state Control / AMD Cool'n'Quiet / Power Supply Idle Control | Tweaker → Advanced CPU Settings | Auto / Enabled / Auto | Leave at default | #27 engineers heat and noise at the cooling hardware, not by limiting uptime. Idle CPU power-scaling doesn't compete with that decision — it's free efficiency during the large fraction of each day the box is idle, not a mechanism this project relies on |
 | Initial Display Output | Settings → IO Ports | PCIe 1 Slot | PCIe 1 Slot (confirm) | Already the discrete-GPU default. ADR-0003 keeps this output specifically for unattended-boot diagnosis, so it's confirmed rather than assumed |
 
+## Fan curve (CPU/case fans)
+
+Not itself a consequence of ADR-0003/0010/0005, but the same 24/7-in-an-inhabited-
+room posture (#27) applies, and the same headless-box constraint from ADR-0003
+bites here too: there's no Windows System Information Viewer running on this box
+to tune the "Normal" preset's curve, so BIOS-level Manual mode (Smart Fan 5
+screen, manual p. 31) is the only way to get a persistent custom curve at all.
+
+Scope: every case fan is daisy-chained through a hub back to the CPU_FAN header —
+one physical group, one curve. The pump runs its own separate regime on its own
+header and is out of scope here.
+
+| Smart Fan 5 field | Set to | Why |
+| --- | --- | --- |
+| Monitor | CPU Fan | The hub's sense wire reports through this header; it's the one group controlling every case fan |
+| Fan Speed Control | **Manual** | "Normal" is tuned via Windows-only SIV, which never runs on this headless box (ADR-0003); Manual is the only mode that gives a persistent curve without it |
+| Fan Control Use Temperature Input | CPU Temperature | Single best proxy for whole-case heat without per-zone sensors; the live screen exposes other sources the manual doesn't itemize |
+| Fan Control Mode | PWM | The manual's own recommendation for a 4-pin header, and deterministic where Auto-detect isn't |
+| Fan Stop | **Disabled** | The whole case-airflow group would stop together below the threshold, not just one fan — too coarse a cut for a box carrying a GPU and two NVMe drives 24/7. A steady, quiet floor beats fans cycling on and off, which draws the ear more than constant low noise does |
+| Temperature Warning Control | 80°C | Cheap early warning ahead of the 5600X's ~90-95°C thermal ceiling; doesn't gate anything, just an audible flag if the curve below ever falls short |
+
+**Starting curve** (5 points; tune by ear once installed):
+
+| CPU temp | Duty |
+| --- | --- |
+| ≤ 40°C | 30% |
+| 50°C | 40% |
+| 60°C | 55% |
+| 70°C | 75% |
+| ≥ 80°C | 100% |
+
+A silence-first floor (30%, not 0%) instead of Fan Stop's on/off cycling —
+continuous low airflow is less noticeable in an office than a fan spinning up and
+down. The curve stays flat through the box's ordinary 24/7 baseline (background
+containers, metrics scraping) and only climbs for real load (Immich ML, a
+`restic` backup run, a `zpool trim`), reaching full speed with headroom before
+the CPU's own thermal limit — deliberately, since nobody is in the room at 3 a.m.
+to notice a throttle.
+
 ## Left to the installing ticket
 
 - **Which physical M.2 socket carries which pool.** ADR-0010 splits system
