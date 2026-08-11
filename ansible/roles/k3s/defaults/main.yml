@@ -1,0 +1,35 @@
+# Defaults for the `k3s` role.
+#
+# `k3s_role` is deliberately absent, same reasoning as `tailscale_authkey`
+# and `nfs_client_nas_host`: this role never guesses whether a node is the
+# server or an agent (see the assertion in tasks/main.yml). Set it in
+# inventory or host_vars: `k3s_role: server` or `k3s_role: agent`.
+
+# Release channel k3s's own install script (get.k3s.io) resolves a version
+# from. ADR-0007 selected "stable" for a low-touch operator trading newest
+# features for fewer surprises; not something this platform has ever needed
+# to override, but kept as a variable rather than hardcoded in tasks/, same
+# pattern as tailscale_track.
+k3s_channel: stable
+
+# Server mode only: packaged AddOns disabled at install
+# (docs.k3s.io/installation/packaged-components lists coredns, traefik,
+# local-storage, metrics-server; servicelb the same way despite having no
+# manifest of its own). local-storage disabled here is #70's own acceptance
+# criterion, not ADR-0007's call: ADR-0007's Consequences section leaves
+# local-path's actual disposition to #19 (storage layout), so treat this as
+# a placeholder #19 may revisit, not a settled architectural decision. #22
+# (public exposure/ingress) independently decides the other AddOns
+# (servicelb, traefik) in its own domain — extend this string
+# (space-separated `--disable=<name>` flags) when either lands, no template
+# needed for one more flag.
+k3s_server_exec_args: --disable=local-storage
+
+# Agent mode only: which inventory host is the k3s server to join. No
+# default, same reasoning as k3s_role — set it in inventory or host_vars
+# once a second node exists.
+# k3s_server_node:
+
+# Agent mode only: port the server's API listens on. k3s's own default,
+# not something this platform has ever needed to change.
+k3s_server_port: 6443
