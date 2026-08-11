@@ -1,0 +1,105 @@
+---
+# Role `k3s`: install the orchestrator (#70, ADR-0007). One role, two modes
+# selected by `k3s_role`: `server` installs k3s on its default SQLite
+# datastore with no `--cluster-init` (ADR-0007's "one server forever");
+# `agent` joins an existing server, fetching the join token live from it
+# rather than this role ever caching it to disk itself.
+#
+# Both modes install via get.k3s.io's own script (`curl | sh`), the method
+# k3s's own docs recommend, rather than an apt repo pinned like the
+# tailscale/nvidia roles: the script downloads a release tarball and
+# verifies it against a published sha256sum before installing, which is
+# its own integrity check in place of a pinned GPG keyring.
+#
+# Untested against real hardware: inventory.yml still only has node1's
+# RFC 5737 placeholder address, and agent mode has no second node to join
+# yet — same caveat as the `nvidia` and `nfs-client` roles, hence this role
+# stays commented out in site.yml for now. Both modes lean on the install
+# script for idempotency: it hashes the installed binary, systemd unit and
+# env file before and after running, and prints "No change detected so
+# skipping service start" (source: get.k3s.io's `service_enable_and_start`)
+# when nothing needs to change, which is what `changed_when` below keys off
+# instead of reimplementing that check.
+
+- name: Assert that k3s_role is set to a supported value
+  ansible.builtin.assert:
+    that:
+      - k3s_role is defined
+      - k3s_role in ['server', 'agent']
+    fail_msg: >-
+      k3s_role is not set to 'server' or 'agent'. This role never ships a
+      default for it (see defaults/main.yml); set it in inventory or
+      host_vars before running against a real host.
+
+- name: Configure this node as a k3s server
+  when: k3s_role == 'server'
+  block:
+    - name: Install k3s in server mode
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -o pipefail
+          curl -sfL https://get.k3s.io | sh -
+      environment:
+        INSTALL_K3S_CHANNEL: "{{ k3s_channel }}"
+        INSTALL_K3S_EXEC: "{{ k3s_server_exec_args }}"
+      register: k3s_server_install
+      changed_when: "'No change detected' not in k3s_server_install.stdout"
+
+- name: Configure this node as a k3s agent
+  when: k3s_role == 'agent'
+  block:
+    - name: Assert that the primary server node is set
+      ansible.builtin.assert:
+        that:
+          - k3s_server_node is defined
+          - k3s_server_node | string | length > 0
+        fail_msg: >-
+          k3s_server_node is not set. This role never ships a default for
+          it (see defaults/main.yml); set it to the inventory hostname of
+          the k3s server before running an agent against a real host.
+
+    - name: Assert that the primary server node has a known address
+      ansible.builtin.assert:
+        that:
+          - hostvars[k3s_server_node].ansible_host is defined
+        fail_msg: >-
+          k3s_server_node ('{{ k3s_server_node }}') has no ansible_host set
+          in inventory.yml. Fix the inventory entry before running an agent
+          against a real host.
+
+    # Delegated, not templated from a fact gathered earlier: this role
+    # never caches or persists the token itself, so reading it fresh from
+    # the server on every agent run (rather than once into a stored fact)
+    # is what "fetches ... via delegated fact" (#70) means in practice.
+    - name: Read the join token from the primary server node
+      ansible.builtin.slurp:
+        src: /var/lib/rancher/k3s/server/node-token
+      register: k3s_node_token_raw
+      delegate_to: "{{ k3s_server_node }}"
+      no_log: true
+
+    # K3S_TOKEN goes straight from the delegated read into this task's
+    # environment: this role writes it to no tempfile and no persisted var
+    # file, matching #70's "persists nothing" for its own part. k3s's own
+    # install script still writes every K3S_*/CONTAINERD_* env var,
+    # including this one, to its systemd env file
+    # (/etc/systemd/system/k3s-agent.service.env, mode 0600) so the unit
+    # can restart with the same config — that persistence is k3s's, not
+    # this role's, and out of its control. no_log covers this task because
+    # the token would otherwise appear in the environment dict of any
+    # failure output.
+    - name: Install k3s in agent mode
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -o pipefail
+          curl -sfL https://get.k3s.io | sh -
+      environment:
+        INSTALL_K3S_CHANNEL: "{{ k3s_channel }}"
+        K3S_URL: "https://{{ hostvars[k3s_server_node].ansible_host }}:{{ k3s_server_port }}"
+        K3S_TOKEN: "{{ k3s_node_token_raw.content | b64decode | trim }}"
+      register: k3s_agent_install
+      # Same "No change detected" gate as the server task above.
+      changed_when: "'No change detected' not in k3s_agent_install.stdout"
+      no_log: true

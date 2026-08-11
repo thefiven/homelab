@@ -11,5 +11,5 @@
     - zfs         # state-pool creation, ARC cap, scheduled trim
     - tailscale   # enrollment
     # - nvidia      # driver + nvidia-container-toolkit (#68, untested against real hardware yet)
-    # - k3s         # server mode (node 1) / agent mode + live token fetch (later nodes)
+    # - k3s         # server/agent mode (#70, untested against real hardware yet)
     # - nfs-client  # NAS mounts for Immich originals (#69, untested against real hardware — NAS currently inaccessible)
