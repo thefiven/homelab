@@ -1,0 +1,106 @@
+# Role `nvidia`: install the GPU driver and the container toolkit, so
+# container workloads can request the RTX 3070 Ti as a resource (#68).
+#
+# Scope stops there. ADR-0002 already retired this card as a desktop/gaming
+# GPU: it is a platform resource now (Immich thumbnailing/ML, inference), so
+# this role only ever asks for the headless "gpgpu" driver flavour, never
+# the desktop one. Wiring nvidia-container-toolkit into containerd's runtime
+# config (`nvidia-ctk runtime configure`) is k3s's job once that role
+# exists: this role installs the toolkit, it doesn't assume a container
+# runtime is already on the box to configure.
+#
+# Untested against real hardware, draft written for #68 while that ticket
+# is still ready-for-human. Verify against the real node before trusting it.
+
+- name: Install ubuntu-drivers-common, needed for hardware-driver detection
+  ansible.builtin.apt:
+    name: ubuntu-drivers-common
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# The idempotency signal is "a driver package is on disk", not "the driver
+# is loaded and working" (`nvidia-smi`): the kernel module doesn't take
+# over from nouveau until the box reboots, so gating on the loaded module
+# would see the same not-yet-rebooted state on every run after the first
+# and reinstall every time. This role doesn't reboot the box; that's a
+# separate, human gesture.
+#
+# `dpkg-query`, not `dpkg -l`: the latter's aligned table is documented as
+# for human eyes, not for scripts, while `-W -f` is dpkg's own
+# scripting-oriented query format.
+- name: List NVIDIA driver packages already installed
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -o pipefail
+      dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' 'nvidia-driver-*' 2>/dev/null \
+        | awk '$1 == "ii" {print $2}'
+  register: nvidia_driver_installed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# `--gpgpu` is Ubuntu's own compute-server selection path (distinct from
+# the desktop "recommended" pick `ubuntu-drivers devices` prints); it reads
+# the hardware and picks the package itself, so this role never hardcodes a
+# driver version to go stale.
+- name: Install the recommended NVIDIA driver for GPU-compute workloads
+  ansible.builtin.command:
+    cmd: ubuntu-drivers install --gpgpu
+  when: nvidia_driver_installed.stdout_lines | length == 0
+  changed_when: true
+
+# Source: NVIDIA's documented apt install
+# (https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
+# The key is ASCII-armored at this URL, unlike Tailscale's already-dearmored
+# one, hence the explicit dearmor step below instead of a straight get_url.
+- name: Fetch the NVIDIA Container Toolkit signing key
+  ansible.builtin.get_url:
+    url: https://nvidia.github.io/libnvidia-container/gpgkey
+    dest: /usr/share/keyrings/nvidia-container-toolkit.asc
+    owner: root
+    group: root
+    mode: "0644"
+    force: true
+  register: nvidia_container_toolkit_key
+
+# Gating only on the fetch's own `changed` would leave the apt source below
+# permanently pointed at a missing keyring if the dearmor step below it were
+# ever interrupted, or the .gpg file deleted, without the upstream .asc
+# content itself changing: the fetch would then report changed=false forever
+# and this task would keep skipping. Re-checking the keyring's own existence
+# is what makes a broken keyring self-heal on the next run.
+- name: Check whether the dearmored keyring already exists
+  ansible.builtin.stat:
+    path: /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+  register: nvidia_container_toolkit_keyring
+
+- name: Dearmor the NVIDIA Container Toolkit signing key
+  ansible.builtin.command:
+    cmd: >-
+      gpg --batch --yes --dearmor
+      -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+      /usr/share/keyrings/nvidia-container-toolkit.asc
+  when: nvidia_container_toolkit_key.changed or not nvidia_container_toolkit_keyring.stat.exists
+  changed_when: true
+
+# Written directly rather than fetched: NVIDIA serves this as a static
+# one-line file (flat repo, no suite/component structure; the trailing
+# `/` is not a typo), so re-downloading it every run would be a second
+# network round-trip for text this role already knows.
+- name: Install the NVIDIA Container Toolkit apt repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/nvidia-container-toolkit.list
+    content: |
+      deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://nvidia.github.io/libnvidia-container/stable/deb/$(ARCH) /
+    owner: root
+    group: root
+    mode: "0644"
+  register: nvidia_container_toolkit_repo_file
+
+- name: Install the nvidia-container-toolkit package
+  ansible.builtin.apt:
+    name: nvidia-container-toolkit
+    state: present
+    update_cache: "{{ nvidia_container_toolkit_repo_file.changed }}"
