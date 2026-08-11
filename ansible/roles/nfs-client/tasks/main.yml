@@ -1,0 +1,61 @@
+# Role `nfs-client`: mount ADR-0010's two NAS exports for Immich's
+# originals (upload/, library/) and validate each with an end-to-end
+# touch/read (#69).
+#
+# Untested against real hardware: the NAS is currently unreachable (admin
+# password lost, reset button dead — see the platform's pending-manual-steps
+# note). Same caveat as the `nvidia` role: verify against the real NAS
+# before trusting this, hence it stays commented out in site.yml for now.
+
+- name: Assert that the NAS host and export base are set
+  ansible.builtin.assert:
+    that:
+      - nfs_client_nas_host is defined
+      - nfs_client_nas_host | string | length > 0
+      - nfs_client_nas_export_base is defined
+      - nfs_client_nas_export_base | string | length > 0
+    fail_msg: >-
+      nfs_client_nas_host and nfs_client_nas_export_base are not set. This
+      role never ships a default for either (see defaults/main.yml); set
+      them in inventory or host_vars before running against a real host.
+
+- name: Install the NFS client packages
+  ansible.builtin.apt:
+    name: nfs-common
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# `ansible.posix.mount` with `state: mounted` creates the local mountpoint,
+# writes the /etc/fstab entry, and mounts it now if it isn't already — all
+# in one idempotent step. A second run reports changed=0 once an export is
+# mounted with these exact options; a change to nfs_client_mount_options
+# remounts with the new options instead of drifting silently.
+- name: Mount the NAS exports for Immich originals
+  ansible.posix.mount:
+    path: "{{ nfs_client_local_root }}/{{ item }}"
+    src: "{{ nfs_client_nas_host }}:{{ nfs_client_nas_export_base }}/{{ item }}"
+    fstype: nfs
+    opts: "{{ nfs_client_mount_options }}"
+    state: mounted
+  loop: "{{ nfs_client_mounts }}"
+
+# Shell, not command: redirection (`>`, `<`) needs a shell to interpret.
+# The `trap` cleans up the probe file on any exit, not just success — under
+# `set -e` a failed content check would otherwise abort before the plain
+# `rm -f` at the end of the script ever ran, leaving the file behind on the
+# export. Nothing persists past this task either way — changed_when: false
+# reflects that no lasting state changes, the same reasoning the `zfs` role
+# applies to its own read-only probes.
+- name: End-to-end validate each mount (touch, read back, clean up)
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -euo pipefail
+      f={{ (nfs_client_local_root + '/' + item + '/.nfs-client-role-check') | quote }}
+      trap 'rm -f "$f"' EXIT
+      echo "nfs-client role check" > "$f"
+      read -r content < "$f"
+      [ "$content" = "nfs-client role check" ]
+  loop: "{{ nfs_client_mounts }}"
+  changed_when: false

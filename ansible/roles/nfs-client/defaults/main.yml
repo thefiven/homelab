@@ -1,0 +1,35 @@
+# Defaults for the `nfs-client` role.
+#
+# `nfs_client_nas_host` and `nfs_client_nas_export_base` are deliberately
+# absent, same reasoning as `zfs_state_disk_serial` and
+# `tailscale_authkey`: a working-looking placeholder here is more dangerous
+# than an assertion failure, since a wrong guess would mount the wrong
+# export, or silently mount nothing. Set both in inventory or host_vars
+# before running against a real host:
+#
+#   nfs_client_nas_host: the NAS's address (LAN or Tailscale hostname)
+#   nfs_client_nas_export_base: the NAS export path that upload/ and
+#     library/ live under as subfolders (ADR-0010: "upload/ and library/
+#     subfolders are NFS-mounted onto the NAS as a mount over a subpath"),
+#     e.g. /volume1/immich on a Synology.
+
+# Local root both mounts land under. Becomes Immich's UPLOAD_LOCATION once
+# the workload that consumes it exists (not this role's concern); thumbs/,
+# encoded-video/, profile/ and backups/ stay on the state pool per
+# ADR-0010's table and are never created here.
+nfs_client_local_root: /srv/immich
+
+# `_netdev` tells systemd this mount depends on the network being up before
+# it's attempted (matters at boot, before Tailscale/LAN is reachable);
+# `nfsvers=4` pins the protocol version explicitly rather than trusting
+# whatever the client and NAS negotiate by default; `rw` because Immich's
+# normal Upload route writes originals here, not just reads them (ADR-0010
+# rejected External Library, the read-mostly pattern).
+nfs_client_mount_options: rw,_netdev,nfsvers=4
+
+# The two exports ADR-0010 names explicitly. Same name on the NAS export,
+# under UPLOAD_LOCATION, and as this list's entries, so a mount's purpose
+# is legible without cross-referencing anything.
+nfs_client_mounts:
+  - upload
+  - library
