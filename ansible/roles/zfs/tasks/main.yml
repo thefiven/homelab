@@ -141,12 +141,22 @@
   changed_when: false
   check_mode: false
 
-# An import that fails while reporting it *saw* the pool is the dangerous
-# case: labels present but the pool unusable — a disk mid-replacement, a
-# pool version too new, a previous host that never exported it. Creating
-# over that would destroy the Postgres database. Stop instead and leave it
-# for a human to look at.
-#
+# An import that fails while reporting it *saw* the pool is generally the
+# dangerous case: labels present but the pool unusable (a disk
+# mid-replacement, a pool version too new). Creating over that would destroy
+# the Postgres database. One shape of that failure is recognized as safe to
+# retry, though: "pool was previously in use from another system" is what
+# ZFS says when the pool's last-imported hostid (baked into its labels at
+# creation) no longer matches this host's /etc/hostid, exactly what a
+# system-disk-only reinstall produces, since Subiquity writes a fresh hostid
+# but leaves an untouched state disk's labels pointing at the old one. Every
+# other unrecognized failure still stops here for a human to look at.
+- name: Note whether the import failure looks like a hostid mismatch
+  ansible.builtin.set_fact:
+    zfs_state_hostid_mismatch: >-
+      {{ zfs_state_pool not in zfs_imported_pools.stdout_lines and
+         'pool was previously in use from another system' in (zfs_state_import.stderr | default('')) }}
+
 # The discriminant is the phrase "no such pool available", never whether the
 # pool's name appears in the message — ZFS writes `cannot import 'state': no
 # such pool available` for a blank disk too, so matching on the name alone
@@ -154,17 +164,48 @@
 # stderr with a nonzero return code also fails this: against a disk that
 # might carry the one irreplaceable dataset, refusing to create is the only
 # safe response to an error this role doesn't recognize.
-- name: Fail unless the pool is simply absent from that disk
+- name: Fail unless the import failure is a recognized shape (absent, or hostid mismatch)
   ansible.builtin.assert:
-    that: "'no such pool available' in (zfs_state_import.stderr | default(''))"
+    that: >-
+      ('no such pool available' in (zfs_state_import.stderr | default(''))) or
+      zfs_state_hostid_mismatch
     fail_msg: >-
       zpool import did not report the pool "{{ zfs_state_pool }}" as absent,
       but also failed to import it:
       {{ zfs_state_import.stderr | default('') | trim }}
-      Nothing will be created over it. Diagnose by hand with
-      `zpool import -d /dev/disk/by-id`.
+      Nothing will be created or force-imported over it. Diagnose by hand
+      with `zpool import -d /dev/disk/by-id`.
     quiet: true
   when: zfs_state_pool not in zfs_imported_pools.stdout_lines
+
+# A hostid mismatch means the pool's own labels still point at the host that
+# last had it imported, and a reinstall always leaves a fresh /etc/hostid on
+# the system disk without touching the state disk. `-f` overrides that
+# stale-ownership refusal only; it does not create or touch labels. It
+# trusts the same stderr text the assert above already required to reach
+# this task, not an independent proof of origin: a state disk shared with,
+# or still actively imported on, another live host would produce this exact
+# message too and would be force-imported here regardless. That risk is
+# accepted for this role's actual topology, a single physical disk in one
+# machine, never shared or multihost storage; the backing-device check
+# further down still catches a same-named pool that turns out to live on the
+# wrong disk, same as every other path through this role.
+- name: Force-import the state pool after a hostid mismatch (reinstalled system disk)
+  ansible.builtin.command:
+    cmd: zpool import -f -d /dev/disk/by-id {{ zfs_state_pool | quote }}
+  environment:
+    LC_ALL: C
+  register: zfs_state_force_import
+  changed_when: true
+  when: zfs_state_hostid_mismatch
+
+- name: List the pools again, now that the forced import happened
+  ansible.builtin.command:
+    cmd: zpool list -H -o name
+  register: zfs_imported_pools
+  changed_when: false
+  check_mode: false
+  when: zfs_state_hostid_mismatch
 
 # `-f` is required, not a convenience: a state disk can carry a stale
 # non-ZFS signature from an earlier life (a previous filesystem, an old
