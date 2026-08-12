@@ -155,11 +155,16 @@ build() {
   xorriso -indev "$iso" -osirrox on -extract /boot/grub/grub.cfg "$tmp/grub.cfg"
   patch_grub_cfg <"$tmp/grub.cfg" >"$tmp/grub.cfg.patched"
 
+  # `-mkdir` takes a variable-length list of paths and only stops consuming
+  # args at an explicit `--`, not at the next `-`-prefixed word — without
+  # it, the `-update` commands below are swallowed as more mkdir targets
+  # instead of running, and the ISO is written with empty directories where
+  # /nocloud/user-data and /nocloud/meta-data should be.
   local -a xorriso_args=(
     -indev "$iso" -outdev "$output"
     -boot_image any replay
     -update "$tmp/grub.cfg.patched" /boot/grub/grub.cfg
-    -mkdir /nocloud
+    -mkdir /nocloud --
     -update "$tmp/user-data" /nocloud/user-data
     -update "$tmp/meta-data" /nocloud/meta-data
   )
