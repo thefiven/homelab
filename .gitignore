@@ -1,2 +1,6 @@
 # Scratch worktrees created by background agents.
 .claude/worktrees/
+
+# Ansible-side secrets with no SOPS+age counterpart (ADR-0009):
+# supply at runtime, never commit.
+ansible/host_vars/*_secrets.yml

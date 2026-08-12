@@ -19,13 +19,20 @@
 # every pending update, security included, without ever removing a package
 # to do it. A freshly provisioned node should not sit on day-one
 # vulnerabilities waiting for the nightly unattended-upgrades timer.
-- name: Install the base packages and apply pending upgrades
+#
+# Split into two tasks: current ansible-core's apt module rejects `name` and
+# `upgrade` in the same call (`parameters are mutually exclusive:
+# deb|package|upgrade`), found on the first real run against real hardware.
+- name: Apply pending upgrades
   ansible.builtin.apt:
-    name: "{{ base_packages }}"
-    state: present
     upgrade: safe
     update_cache: true
     cache_valid_time: 3600
+
+- name: Install the base packages
+  ansible.builtin.apt:
+    name: "{{ base_packages }}"
+    state: present
 
 - name: Ensure the administration account exists
   ansible.builtin.user:

@@ -78,7 +78,7 @@ autoinstall:
     allow-pw: false
   storage:
     layout:
-      name: direct
+      name: zfs
       match:
         serial: "$serial"
   user-data:
@@ -115,6 +115,7 @@ self_check() {
   local pubkey='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIsample test@example'
 
   out=$(render_user_data "$serial" "$pubkey" "$hostname")
+  [[ "$out" == *'name: zfs'* ]] || die "self-check: storage.layout.name must be zfs (ADR-0010: ZFS root, not a plain partition table)"
   [[ "$out" == *'serial: "SAMPLE_SERIAL_123"'* ]] || die "self-check: serial not substituted into storage.layout.match.serial"
   [[ "$out" == *'hostname: "node2"'* ]] || die "self-check: hostname not substituted"
   [[ "$out" == *"$pubkey"* ]] || die "self-check: pubkey not substituted"
@@ -155,11 +156,16 @@ build() {
   xorriso -indev "$iso" -osirrox on -extract /boot/grub/grub.cfg "$tmp/grub.cfg"
   patch_grub_cfg <"$tmp/grub.cfg" >"$tmp/grub.cfg.patched"
 
+  # `-mkdir` takes a variable-length list of paths and only stops consuming
+  # args at an explicit `--`, not at the next `-`-prefixed word — without
+  # it, the `-update` commands below are swallowed as more mkdir targets
+  # instead of running, and the ISO is written with empty directories where
+  # /nocloud/user-data and /nocloud/meta-data should be.
   local -a xorriso_args=(
     -indev "$iso" -outdev "$output"
     -boot_image any replay
     -update "$tmp/grub.cfg.patched" /boot/grub/grub.cfg
-    -mkdir /nocloud
+    -mkdir /nocloud --
     -update "$tmp/user-data" /nocloud/user-data
     -update "$tmp/meta-data" /nocloud/meta-data
   )

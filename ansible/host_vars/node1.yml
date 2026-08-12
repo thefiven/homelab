@@ -1,0 +1,15 @@
+# host_vars for node1.
+#
+# Two identical Kingston SNV2S1000G NVMe disks, no distinguishing partition
+# content (#30 wiped both — no filesystem signature on either's leftover
+# p4). No prior convention recorded in this repo, so the assignment below
+# is arbitrary but now fixed: nvme0n1 is the OS/system disk (build-media's
+# --serial target), nvme1n1 becomes the ZFS state pool.
+#
+# zfs_state_disk_serial is a real designator (ADR-0015): supplied via the
+# gitignored ansible/host_vars/node1_secrets.yml, passed with -e @path.
+
+# node1 is the k3s control plane (ADR-0007: one server, forever).
+k3s_role: server
+
+base_admin_authorized_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEDelC1oe3xlXHMcRuobmsceR9v8ScQ3FiUAWPa28Ac6 node1 bootstrap"
