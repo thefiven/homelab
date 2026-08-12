@@ -236,8 +236,12 @@ else
     *) echo "sops-age-setup: unrecognised architecture $(uname -m); install sops manually: https://github.com/getsops/sops/releases" >&2
        exit 1 ;;
   esac
-  tag=$(curl -sSf https://api.github.com/repos/getsops/sops/releases/latest \
-    | grep -m1 '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
+  # Capture the full response first: grep -m1 closes its end of the pipe as
+  # soon as it matches, and anything still writing into that pipe (curl, or
+  # even printf) gets SIGPIPE, which pipefail/errexit then aborts the whole
+  # script on. A here-string has no writer process to kill.
+  releases_json=$(curl -sSf https://api.github.com/repos/getsops/sops/releases/latest)
+  tag=$(grep -m1 '"tag_name"' <<< "$releases_json" | sed -E 's/.*"([^"]+)".*/\1/')
   bin="sops-${tag}.linux.${sops_arch}"
   # Under $HOME, not /tmp: the sops binary is ~50MB and some systems cap
   # /tmp (tmpfs with a user quota) well under that.
@@ -332,7 +336,8 @@ rm -f "$plain"
 note "wrote $encrypted"
 
 say "Verifying decryption with the daily identity..."
-if SOPS_AGE_KEY_FILE="$DAILY_KEY_FILE" sops -d "$encrypted" | grep -q 'ping: pong'; then
+decrypted=$(SOPS_AGE_KEY_FILE="$DAILY_KEY_FILE" sops -d "$encrypted")
+if [[ "$decrypted" == *"ping: pong"* ]]; then
   note "✓ sops -d decrypts the test secret with the daily identity"
 else
   warn "sops -d did NOT decrypt the test secret as expected"
