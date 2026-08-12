@@ -242,8 +242,8 @@ else
   # Under $HOME, not /tmp: the sops binary is ~50MB and some systems cap
   # /tmp (tmpfs with a user quota) well under that.
   tmp_dir=$(mktemp -d "$HOME/.sops-age-setup.XXXXXX")
-  curl -sSfL -o "$tmp_dir/$bin" "https://github.com/getsops/sops/releases/download/${tag}/${bin}"
-  curl -sSfL -o "$tmp_dir/checksums.txt" "https://github.com/getsops/sops/releases/download/${tag}/sops-${tag}.checksums.txt"
+  curl -sSfL --retry 3 --retry-delay 2 -o "$tmp_dir/$bin" "https://github.com/getsops/sops/releases/download/${tag}/${bin}"
+  curl -sSfL --retry 3 --retry-delay 2 -o "$tmp_dir/checksums.txt" "https://github.com/getsops/sops/releases/download/${tag}/sops-${tag}.checksums.txt"
   (cd "$tmp_dir" && grep " ${bin}\$" checksums.txt | sha256sum -c -)
   mkdir -p "$HOME/.local/bin"
   install -m 0755 "$tmp_dir/$bin" "$HOME/.local/bin/sops"
