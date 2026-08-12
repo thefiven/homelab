@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Runs `flux bootstrap github` against this repo (ADR-0008, #71). One-time,
+# per #62: needs a live k3s cluster reachable via kubectl and a GitHub PAT
+# with repo scope. Installs Flux's four default controllers into
+# clusters/homelab/flux-system/, patched per that directory's kustomization.yaml.
+set -euo pipefail
+
+command -v flux >/dev/null || {
+  echo "flux-bootstrap: flux CLI not found (https://fluxcd.io/flux/installation/)" >&2
+  exit 1
+}
+: "${GITHUB_TOKEN:?flux-bootstrap: set GITHUB_TOKEN to a GitHub PAT with repo scope}"
+
+exec flux bootstrap github \
+  --owner=thefiven \
+  --repository=homelab \
+  --branch=main \
+  --path=clusters/homelab \
+  --personal
