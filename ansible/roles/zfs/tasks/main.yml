@@ -199,13 +199,20 @@
   changed_when: true
   when: zfs_state_hostid_mismatch
 
+# Unconditional, not guarded on zfs_state_hostid_mismatch: a skipped task
+# still registers a result, but a skipped command's result is a bare dict
+# with no stdout_lines, and every later task's `when` reads
+# zfs_imported_pools.stdout_lines. Guarding this listing crashes the very
+# next task (`Create the state pool`) on the ordinary run where nothing
+# needed force-importing — found by actually running a second pass against
+# real hardware. The extra `zpool list` on that path is the cost of keeping
+# this variable valid for every task after it.
 - name: List the pools again, now that the forced import happened
   ansible.builtin.command:
     cmd: zpool list -H -o name
   register: zfs_imported_pools
   changed_when: false
   check_mode: false
-  when: zfs_state_hostid_mismatch
 
 # `-f` is required, not a convenience: a state disk can carry a stale
 # non-ZFS signature from an earlier life (a previous filesystem, an old
