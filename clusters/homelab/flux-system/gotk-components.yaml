@@ -1,0 +1,3 @@
+# Written by `flux bootstrap` (run via scripts/flux-bootstrap, #62); do not
+# hand-edit. Placeholder until that ticket runs, kept empty so this directory
+# builds and lints before a cluster exists.

@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: # populated by `flux bootstrap`, see gotk-components.yaml / gotk-sync.yaml
+  - gotk-components.yaml
+  - gotk-sync.yaml
+patches:
+  # ADR-0002's GitOps envelope is 1 GiB; ADR-0008 confirms Flux's default
+  # install is 4 controllers (source, kustomize, helm, notification), each
+  # shipping a 1Gi memory limit (4Gi total, 4x the envelope). This is Flux's
+  # documented vertical-scaling mechanism
+  # (https://fluxcd.io/flux/installation/configuration/vertical-scaling/):
+  # 200Mi per controller keeps the sum at 800Mi, under the envelope with
+  # margin. Requests (64Mi/controller) and CPU limits are left at Flux's
+  # defaults: ADR-0002 caps CPU by relative weight, not by hard quota.
+  - patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: all
+      spec:
+        template:
+          spec:
+            containers:
+              - name: manager
+                resources:
+                  limits:
+                    memory: 200Mi
+    target:
+      kind: Deployment
+      labelSelector: "app.kubernetes.io/part-of=flux"
