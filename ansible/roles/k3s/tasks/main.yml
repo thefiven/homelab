@@ -11,15 +11,14 @@
 # verifies it against a published sha256sum before installing, which is
 # its own integrity check in place of a pinned GPG keyring.
 #
-# Untested against real hardware: inventory.yml still only has node1's
-# RFC 5737 placeholder address, and agent mode has no second node to join
-# yet — same caveat as the `nvidia` and `nfs-client` roles, hence this role
-# stays commented out in site.yml for now. Both modes lean on the install
-# script for idempotency: it hashes the installed binary, systemd unit and
-# env file before and after running, and prints "No change detected so
-# skipping service start" (source: get.k3s.io's `service_enable_and_start`)
-# when nothing needs to change, which is what `changed_when` below keys off
-# instead of reimplementing that check.
+# Server mode is now exercised against real hardware (#74). Agent mode
+# still has no second node to join, so it remains unexercised — same
+# caveat as the `nvidia` and `nfs-client` roles. Both modes lean on the
+# install script for idempotency: it hashes the installed binary, systemd
+# unit and env file before and after running, and prints "No change
+# detected so skipping service start" (source: get.k3s.io's
+# `service_enable_and_start`) when nothing needs to change, which is what
+# `changed_when` below keys off instead of reimplementing that check.
 
 - name: Assert that k3s_role is set to a supported value
   ansible.builtin.assert:
@@ -72,11 +71,20 @@
     # never caches or persists the token itself, so reading it fresh from
     # the server on every agent run (rather than once into a stored fact)
     # is what "fetches ... via delegated fact" (#70) means in practice.
+    #
+    # `delegate_to` is templated before `when` is evaluated (a documented
+    # ansible-core ordering, not specific to this block), so on a server
+    # node — where k3s_server_node is never set — the bare expression blew
+    # up with "'k3s_server_node' is undefined" despite the block's `when`
+    # correctly excluding server nodes from ever reaching this task. The
+    # `| default(inventory_hostname)` only has to make the template render;
+    # `when` still prevents this task's module from ever running on a
+    # server node.
     - name: Read the join token from the primary server node
       ansible.builtin.slurp:
         src: /var/lib/rancher/k3s/server/node-token
       register: k3s_node_token_raw
-      delegate_to: "{{ k3s_server_node }}"
+      delegate_to: "{{ k3s_server_node | default(inventory_hostname) }}"
       no_log: true
 
     # K3S_TOKEN goes straight from the delegated read into this task's

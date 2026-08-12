@@ -200,6 +200,14 @@
 # that gap, for both paths at once: whatever "{{ zfs_state_pool }}" turns
 # out to be backed by, it must resolve to the same disk the serial matched,
 # or nothing past this point is allowed to touch it.
+# `zpool create` on a whole-disk link auto-partitions it (labels live in
+# partition 1), so `zpool status` reports the pool as backed by
+# `.../nvme1n1p1`, never the whole-disk path `zfs_state_disk_devices`
+# resolved. Comparing those directly fails every real create, which is what
+# the first real run against real hardware found. `lsblk -no pkname` walks a
+# partition back to its parent disk; a device with no parent (already a
+# whole disk, e.g. an imported pool that predates partitioning) falls
+# through to itself unchanged.
 - name: Resolve the state pool's actual backing device
   ansible.builtin.shell:
     executable: /bin/bash
@@ -208,6 +216,10 @@
       zpool status -P {{ zfs_state_pool | quote }} \
         | awk '$1 ~ /^\// { print $1 }' \
         | xargs -r readlink -f \
+        | while read -r dev; do
+            pkname=$(lsblk -no pkname "$dev" 2>/dev/null)
+            if [ -n "$pkname" ]; then printf '/dev/%s\n' "$pkname"; else printf '%s\n' "$dev"; fi
+          done \
         | sort -u
   register: zfs_state_pool_backing_devices
   changed_when: false
