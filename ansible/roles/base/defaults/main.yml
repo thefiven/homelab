@@ -7,11 +7,15 @@
 # be mistaken for a real one to copy, and the admin key is exactly the kind
 # of thing ADR-0001 says never ships a working-looking default.
 
-# Bootstrap account created by cloud-init at install time (ADR-0013). The
-# role reasserts its shape on every run rather than trusting what the
-# installer left behind, so a later manual change does not silently survive
-# a playbook run.
-base_admin_user: admin
+# The role-managed admin account, reasserted on every run rather than
+# trusting what a prior run left behind. Named after the node's real
+# hostname (ADR-0015), so it converges with `scripts/build-media`'s
+# cloud-init bootstrap account instead of leaving two separate accounts on
+# the box. `real_hostname` is itself a designator with no committed value
+# (ADR-0015): it only exists in the gitignored `host_vars/<node>_secrets.yml`,
+# supplied via `-e`, so this template reference fails loudly instead of
+# silently defaulting to a fixed name.
+base_admin_user: "{{ real_hostname }}"
 base_admin_groups:
   - sudo
   - adm
