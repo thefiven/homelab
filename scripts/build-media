@@ -78,7 +78,7 @@ autoinstall:
     allow-pw: false
   storage:
     layout:
-      name: direct
+      name: zfs
       match:
         serial: "$serial"
   user-data:
@@ -115,6 +115,7 @@ self_check() {
   local pubkey='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIsample test@example'
 
   out=$(render_user_data "$serial" "$pubkey" "$hostname")
+  [[ "$out" == *'name: zfs'* ]] || die "self-check: storage.layout.name must be zfs (ADR-0010: ZFS root, not a plain partition table)"
   [[ "$out" == *'serial: "SAMPLE_SERIAL_123"'* ]] || die "self-check: serial not substituted into storage.layout.match.serial"
   [[ "$out" == *'hostname: "node2"'* ]] || die "self-check: hostname not substituted"
   [[ "$out" == *"$pubkey"* ]] || die "self-check: pubkey not substituted"
