@@ -2,9 +2,11 @@
 # Stamp a stock Ubuntu Server ISO into zero-touch autoinstall media for one
 # node (ADR-0013, gesture 3). Embeds a cloud-init NoCloud user-data/meta-data
 # pair (storage.layout.match.serial disambiguates the target disk; the
-# bootstrap account is a locked-password, key-only, NOPASSWD-sudo user via
-# user-data.users, never `identity`) and patches boot/grub/grub.cfg +
-# loopback.cfg so install starts on insert + power-on, no console needed.
+# bootstrap account is named after --hostname, not a fixed name like
+# `ubuntu`, so the OS hostname and the login account stay the same value;
+# it is a locked-password, key-only, NOPASSWD-sudo user via user-data.users,
+# never `identity`) and patches boot/grub/grub.cfg + loopback.cfg so install
+# starts on insert + power-on, no console needed.
 #
 # ponytail: the grub.cfg patch matches the ` ---` cmdline-separator
 # convention casper installer menus have used across releases, verified via
@@ -37,8 +39,13 @@ die() { echo "build-media: $*" >&2; exit 1; }
 yaml_escape() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
 
 validate_hostname() {
-  [[ "$1" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]] \
-    || die "invalid hostname: $1"
+  # This value doubles as the bootstrap account name (user-data.users[].name
+  # below), so the regex is a Linux username's constraints (lowercase start,
+  # lowercase/digits/dash, <=32 chars), not a DNS label's looser ones (mixed
+  # case, <=63 chars). A hostname that passed only the looser rule could
+  # fail account creation with no fallback login (ssh key auth only).
+  [[ "$1" =~ ^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$ ]] \
+    || die "invalid hostname: $1 (must also be a valid Linux username: lowercase, start with a letter, max 32 chars)"
 }
 
 validate_serial() {
@@ -84,7 +91,7 @@ autoinstall:
   user-data:
     hostname: "$hostname"
     users:
-      - name: ubuntu
+      - name: "$hostname"
         lock_passwd: true
         sudo: "ALL=(ALL) NOPASSWD:ALL"
         ssh_authorized_keys:
@@ -120,6 +127,7 @@ self_check() {
   [[ "$out" == *'hostname: "node2"'* ]] || die "self-check: hostname not substituted"
   [[ "$out" == *"$pubkey"* ]] || die "self-check: pubkey not substituted"
   [[ "$out" == *'lock_passwd: true'* && "$out" == *'NOPASSWD:ALL'* ]] || die "self-check: bootstrap account shape missing"
+  [[ "$out" == *'- name: "node2"'* ]] || die "self-check: bootstrap account name must equal --hostname, not a fixed name"
   [[ "$out" != *'identity:'* ]] || die "self-check: identity: section must not be emitted (ADR-0013)"
 
   out=$(render_meta_data "$hostname")
