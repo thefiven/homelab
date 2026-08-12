@@ -1,0 +1,27 @@
+# Pre-commit scanning (ADR-0009, #73): two independent layers ahead of
+# GitHub's push protection.
+#
+# 1. sops-metadata-policy, local (scripts/check-sops-secrets). Enforces this
+#    repo's own path convention (secrets/.*\.ya?ml$, from .sops.yaml): any
+#    such file must be SOPS-encrypted.
+# 2. gitleaks, pattern-matches likely secret material anywhere in the diff,
+#    the backstop for values pasted somewhere the path convention doesn't
+#    cover.
+#
+# Install once per checkout: pip install pre-commit && pre-commit install
+repos:
+  - repo: local
+    hooks:
+      - id: sops-metadata-policy
+        name: SOPS metadata policy (secrets/ must be encrypted)
+        entry: scripts/check-sops-secrets
+        language: script
+        # Unanchored, matching .sops.yaml's own path_regex exactly: SOPS
+        # matches that regex unanchored too, so a nested path like
+        # apps/foo/secrets/bar.yaml is in scope for both.
+        files: secrets/.*\.ya?ml$
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
