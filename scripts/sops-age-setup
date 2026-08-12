@@ -200,11 +200,13 @@ REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
 SOPS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/sops/age"
 DAILY_KEY_FILE="$SOPS_DIR/keys.txt"
 
-# Temp files that must never survive an interrupted run (they hold, or will
-# hold, the recovery private key / a plaintext secret). Cleaned on any exit.
+# Temp files/dirs that must never survive an interrupted run (they hold, or
+# will hold, the recovery private key / a plaintext secret / a download
+# scratch dir). Cleaned on any exit.
 recovery_tmp=""
 plain=""
-trap 'rm -f "$recovery_tmp" "$plain" 2>/dev/null' EXIT
+tmp_dir=""
+trap 'rm -rf "$tmp_dir" 2>/dev/null; rm -f "$recovery_tmp" "$plain" 2>/dev/null' EXIT
 
 banner "SOPS + age setup (#72)"
 
@@ -237,7 +239,9 @@ else
   tag=$(curl -sSf https://api.github.com/repos/getsops/sops/releases/latest \
     | grep -m1 '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
   bin="sops-${tag}.linux.${sops_arch}"
-  tmp_dir=$(mktemp -d)
+  # Under $HOME, not /tmp: the sops binary is ~50MB and some systems cap
+  # /tmp (tmpfs with a user quota) well under that.
+  tmp_dir=$(mktemp -d "$HOME/.sops-age-setup.XXXXXX")
   curl -sSfL -o "$tmp_dir/$bin" "https://github.com/getsops/sops/releases/download/${tag}/${bin}"
   curl -sSfL -o "$tmp_dir/checksums.txt" "https://github.com/getsops/sops/releases/download/${tag}/sops-${tag}.checksums.txt"
   (cd "$tmp_dir" && grep " ${bin}\$" checksums.txt | sha256sum -c -)
