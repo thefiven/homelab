@@ -180,12 +180,12 @@ finish() {
 }
 
 # ──────────────────────────────────────────────────────────────────────────
-# STAGES — SOPS + age setup (ADR-0009, #72).
+# STAGES: SOPS + age setup (ADR-0009, #72).
 #
 # Generates the two age identities the ADR calls for, writes .sops.yaml with
 # both public keys, and proves the daily identity can decrypt with a test
 # secret. The recovery private key is shown once, for you to paste into
-# Google Password Manager, then deleted from disk — it must never live as a
+# Google Password Manager, then deleted from disk; it must never live as a
 # file outside that step. The kubectl step that loads the daily identity
 # into a cluster is deliberately NOT run here (no cluster exists yet); it's
 # scripts/sops-age-bootstrap, run later once Flux is up.
@@ -200,6 +200,12 @@ REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
 SOPS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/sops/age"
 DAILY_KEY_FILE="$SOPS_DIR/keys.txt"
 
+# Temp files that must never survive an interrupted run (they hold, or will
+# hold, the recovery private key / a plaintext secret). Cleaned on any exit.
+recovery_tmp=""
+plain=""
+trap 'rm -f "$recovery_tmp" "$plain" 2>/dev/null' EXIT
+
 banner "SOPS + age setup (#72)"
 
 # ── Stage 1: install age + sops ────────────────────────────────────────────
@@ -213,8 +219,8 @@ else
   if confirm "Run 'sudo apt-get install -y age'?"; then
     sudo apt-get install -y age
   else
-    warn "age not installed — later stages will fail without it."
-    SKIPPED+=("install age: sudo apt-get install -y age")
+    echo "sops-age-setup: age is required from here on; install it and re-run." >&2
+    exit 1
   fi
 fi
 
@@ -225,25 +231,25 @@ else
   case "$(uname -m)" in
     x86_64)  sops_arch=amd64 ;;
     aarch64) sops_arch=arm64 ;;
-    *) warn "unrecognised architecture $(uname -m) — install sops manually: https://github.com/getsops/sops/releases"
-       SKIPPED+=("install sops manually (unrecognised arch)")
-       sops_arch="" ;;
+    *) echo "sops-age-setup: unrecognised architecture $(uname -m); install sops manually: https://github.com/getsops/sops/releases" >&2
+       exit 1 ;;
   esac
-  if [[ -n "$sops_arch" ]]; then
-    tag=$(curl -sSf https://api.github.com/repos/getsops/sops/releases/latest \
-      | grep -m1 '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
-    bin="sops-${tag}.linux.${sops_arch}"
-    tmp_dir=$(mktemp -d)
-    curl -sSfL -o "$tmp_dir/$bin" "https://github.com/getsops/sops/releases/download/${tag}/${bin}"
-    curl -sSfL -o "$tmp_dir/checksums.txt" "https://github.com/getsops/sops/releases/download/${tag}/sops-${tag}.checksums.txt"
-    (cd "$tmp_dir" && grep " ${bin}\$" checksums.txt | sha256sum -c -)
-    mkdir -p "$HOME/.local/bin"
-    install -m 0755 "$tmp_dir/$bin" "$HOME/.local/bin/sops"
-    rm -rf "$tmp_dir"
-    note "installed sops ${tag} → $HOME/.local/bin/sops"
-    command -v sops >/dev/null 2>&1 || warn "$HOME/.local/bin isn't on PATH yet — open a new shell before the next stage."
-  fi
+  tag=$(curl -sSf https://api.github.com/repos/getsops/sops/releases/latest \
+    | grep -m1 '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
+  bin="sops-${tag}.linux.${sops_arch}"
+  tmp_dir=$(mktemp -d)
+  curl -sSfL -o "$tmp_dir/$bin" "https://github.com/getsops/sops/releases/download/${tag}/${bin}"
+  curl -sSfL -o "$tmp_dir/checksums.txt" "https://github.com/getsops/sops/releases/download/${tag}/sops-${tag}.checksums.txt"
+  (cd "$tmp_dir" && grep " ${bin}\$" checksums.txt | sha256sum -c -)
+  mkdir -p "$HOME/.local/bin"
+  install -m 0755 "$tmp_dir/$bin" "$HOME/.local/bin/sops"
+  rm -rf "$tmp_dir"
+  export PATH="$HOME/.local/bin:$PATH"
+  note "installed sops ${tag} to $HOME/.local/bin/sops"
 fi
+
+command -v age-keygen >/dev/null 2>&1 || { echo "sops-age-setup: age-keygen still not found." >&2; exit 1; }
+command -v sops >/dev/null 2>&1 || { echo "sops-age-setup: sops still not found." >&2; exit 1; }
 
 # ── Stage 2: daily identity ────────────────────────────────────────────────
 stage "Daily identity"
@@ -252,7 +258,9 @@ mkdir -p "$SOPS_DIR"
 chmod 700 "$SOPS_DIR"
 if [[ -f "$DAILY_KEY_FILE" ]]; then
   note "daily identity already exists at $DAILY_KEY_FILE"
-  confirm "Regenerate and OVERWRITE it?" && age-keygen -o "$DAILY_KEY_FILE"
+  # age-keygen refuses to write to a file that already exists, so an
+  # overwrite needs the old one gone first.
+  confirm "Regenerate and OVERWRITE it?" && rm -f "$DAILY_KEY_FILE" && age-keygen -o "$DAILY_KEY_FILE"
 else
   age-keygen -o "$DAILY_KEY_FILE"
 fi
@@ -264,8 +272,12 @@ note "daily private key: $DAILY_KEY_FILE (never committed, never leaves this mac
 # ── Stage 3: recovery identity → Google Password Manager ──────────────────
 stage "Recovery identity → Google Password Manager"
 say "Per ADR-0009 its private key lives ONLY in Google Password Manager, never as a file on disk after this stage."
-recovery_tmp=$(mktemp)
-age-keygen -o "$recovery_tmp" 2>/dev/null
+# mktemp -u: age-keygen refuses to write to a file that already exists, so
+# the path must not exist yet when it runs.
+# ponytail: mktemp -u has a TOCTOU race; acceptable on a single-operator
+# workstation with no local attacker model.
+recovery_tmp=$(mktemp -u)
+age-keygen -o "$recovery_tmp"
 RECOVERY_PUBLIC_KEY=$(age-keygen -y "$recovery_tmp")
 RECOVERY_PRIVATE_KEY=$(grep '^AGE-SECRET-KEY-' "$recovery_tmp")
 open_url "https://passwords.google.com/"
