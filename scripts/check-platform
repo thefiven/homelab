@@ -13,7 +13,23 @@ set -euo pipefail
 
 node1_host="${NODE1_HOST:-node1}"
 
-ssh "$node1_host" 'bash -s' <<'REMOTE'
+# Read the NAS check's shape from nfs-client's own defaults instead of
+# duplicating them here — a second copy is exactly what would let this
+# script keep passing (or start failing) against a mount the role no
+# longer produces. host_vars overrides aren't read: this check is a
+# smoke test of the role's own defaults, not of whatever a given host's
+# local overrides happen to be.
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+defaults="$repo_root/ansible/roles/nfs-client/defaults/main.yml"
+local_root="$(awk -F': *' '/^nfs_client_local_root:/ { print $2; exit }' "$defaults")"
+check_uid="$(awk -F': *' '/^nfs_client_check_uid:/ { print $2; exit }' "$defaults")"
+mounts="$(awk '/^nfs_client_mounts:/ { f=1; next } f && /^  - / { printf "%s ", $2 } f && !/^  - / { exit }' "$defaults")"
+[[ -n "$local_root" && -n "$check_uid" && -n "$mounts" ]] || {
+  echo "check-platform: could not read nfs_client_local_root/check_uid/mounts from $defaults" >&2
+  exit 1
+}
+
+remote_script=$(cat <<'REMOTE'
 set -euo pipefail
 
 echo "ZFS pools ONLINE"
@@ -32,11 +48,10 @@ sudo k3s kubectl run check-platform-gpu --rm -i --restart=Never \
   --limits=nvidia.com/gpu=1 --command -- nvidia-smi -L
 
 echo "NAS mounts present, non-root write proven"
-for share in upload library; do
-  mountpoint -q "/srv/immich/$share"
-  f="/srv/immich/$share/.check-platform-nonroot"
-  # UID 1000 matches nfs-client's nfs_client_check_uid default.
-  setpriv --reuid=1000 --regid=1000 --clear-groups bash -c "echo ok > \"$f\"; rm -f \"$f\""
+for share in __MOUNTS__; do
+  mountpoint -q "__LOCAL_ROOT__/$share"
+  f="__LOCAL_ROOT__/$share/.check-platform-nonroot"
+  setpriv --reuid=__CHECK_UID__ --regid=__CHECK_UID__ --clear-groups bash -c "echo ok > \"$f\"; rm -f \"$f\""
 done
 
 echo "sops-age secret present"
@@ -45,5 +60,11 @@ sudo k3s kubectl get secret sops-age -n flux-system >/dev/null
 echo "No pending reboot"
 [ ! -f /var/run/reboot-required ]
 REMOTE
+)
+remote_script=${remote_script//__MOUNTS__/$mounts}
+remote_script=${remote_script//__LOCAL_ROOT__/$local_root}
+remote_script=${remote_script//__CHECK_UID__/$check_uid}
+
+ssh "$node1_host" 'bash -s' <<< "$remote_script"
 
 echo "check-platform: all invariants hold"
