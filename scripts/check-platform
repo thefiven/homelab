@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Asserts the platform invariants #101 exists to prepare and #102 exists to
+# prove — the same list docs/reference/platform-state.md describes in
+# prose, kept in sync with this script's checks. Runs on node1 over SSH
+# (NODE1_HOST overrides the "node1" SSH-config alias, same convention as
+# scripts/sops-age-bootstrap): every check here is either node-local (ZFS,
+# mounts, pending reboot) or answered by node1's own k3s kubectl, so
+# there's nothing a local kubectl/kubeconfig would add.
+#
+# Exits non-zero on the first failing check; its name is the last line
+# printed before that (set -e over the remote script).
+set -euo pipefail
+
+node1_host="${NODE1_HOST:-node1}"
+
+ssh "$node1_host" 'bash -s' <<'REMOTE'
+set -euo pipefail
+
+echo "ZFS pools ONLINE"
+zpool list -H -o name,health | awk -F'\t' '$2 != "ONLINE" { print "  not ONLINE: " $0; exit 1 }'
+
+echo "k3s node Ready"
+sudo k3s kubectl get nodes --no-headers | awk '$2 != "Ready" { print "  not Ready: " $0; exit 1 }'
+
+echo "Flux controllers healthy"
+sudo k3s kubectl get deployments -n flux-system --no-headers \
+  | awk '{ split($2, r, "/"); if (r[1] != r[2]) { print "  not ready: " $0; exit 1 } }'
+
+echo "GPU visible to a pod"
+sudo k3s kubectl run check-platform-gpu --rm -i --restart=Never \
+  --image=nvidia/cuda:12.6.0-base-ubuntu24.04 \
+  --limits=nvidia.com/gpu=1 --command -- nvidia-smi -L
+
+echo "NAS mounts present, non-root write proven"
+for share in upload library; do
+  mountpoint -q "/srv/immich/$share"
+  f="/srv/immich/$share/.check-platform-nonroot"
+  # UID 1000 matches nfs-client's nfs_client_check_uid default.
+  setpriv --reuid=1000 --regid=1000 --clear-groups bash -c "echo ok > \"$f\"; rm -f \"$f\""
+done
+
+echo "sops-age secret present"
+sudo k3s kubectl get secret sops-age -n flux-system >/dev/null
+
+echo "No pending reboot"
+[ ! -f /var/run/reboot-required ]
+REMOTE
+
+echo "check-platform: all invariants hold"

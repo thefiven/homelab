@@ -70,6 +70,9 @@ See [ADR-0010](./docs/adr/0010-zfs-system-state-split-storage-layout.md).
 The ZFS pool holding everything Ansible and GitOps reconstruct from this
 repository — OS root, k3s, container images, the ML model cache. Disposable by
 construction; a lost drive is a reinstall, not a restore.
+Subiquity's ZFS-guided autoinstall names it `bpool` (boot) and `rpool`
+(root) on disk, not literally `system` — "system pool" is this glossary's
+name for the pair, not a `zpool list` name to grep for.
 
 **State pool**:
 The ZFS pool holding what no rebuild recreates — application databases and

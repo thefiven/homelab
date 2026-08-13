@@ -1,11 +1,6 @@
 # Role `nfs-client`: mount ADR-0010's two NAS exports for Immich's
 # originals (upload/, library/) and validate each with an end-to-end
-# touch/read (#69).
-#
-# Untested against real hardware: the NAS is currently unreachable (admin
-# password lost, reset button dead — see the platform's pending-manual-steps
-# note). Same caveat as the `nvidia` role: verify against the real NAS
-# before trusting this, hence it stays commented out in site.yml for now.
+# touch/read, as root and as a non-root UID (#69, #101).
 
 - name: Assert that the NAS host and export base are set
   ansible.builtin.assert:
@@ -57,5 +52,28 @@
       echo "nfs-client role check" > "$f"
       read -r content < "$f"
       [ "$content" = "nfs-client role check" ]
+  loop: "{{ nfs_client_mounts }}"
+  changed_when: false
+
+# The root check above only proves the mount works — it doesn't prove
+# Immich's own (non-root) process can write to it. A Synology export
+# commonly applies root squash (root on the client is remapped to a
+# low-privilege user on the export), which a root-owned probe never
+# exercises. `setpriv` drops to `nfs_client_check_uid` for this probe only
+# — no local user account needed to have a real UID to drop to. Same
+# cleanup-on-any-exit and changed_when: false reasoning as the root check.
+- name: End-to-end validate each mount as a non-root UID (touch, read back, clean up)
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -euo pipefail
+      f={{ (nfs_client_local_root + '/' + item + '/.nfs-client-role-check-nonroot') | quote }}
+      content="nfs-client role check, uid {{ nfs_client_check_uid }}"
+      trap 'rm -f "$f"' EXIT
+      export f content
+      setpriv --reuid={{ nfs_client_check_uid }} --regid={{ nfs_client_check_uid }} --clear-groups \
+        bash -c 'echo "$content" > "$f"'
+      setpriv --reuid={{ nfs_client_check_uid }} --regid={{ nfs_client_check_uid }} --clear-groups \
+        bash -c 'read -r got < "$f"; [ "$got" = "$content" ]'
   loop: "{{ nfs_client_mounts }}"
   changed_when: false
