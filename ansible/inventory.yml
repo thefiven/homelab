@@ -2,8 +2,9 @@
 #
 # ansible_host is a router-side DHCP reservation, not chosen here (ADR-0013,
 # gesture 5): once a node boots and its MAC address appears on the LAN,
-# reserve its IP on the router, then replace the placeholder below with the
-# reserved address.
+# reserve its IP on the router. The real address and real ansible_user are
+# real designators (ADR-0015) and never go here: supply them via the
+# gitignored ansible/host_vars/node1_secrets.yml, passed with -e @path.
 all:
   hosts:
     node1:
