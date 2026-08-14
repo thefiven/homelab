@@ -45,7 +45,8 @@ sudo k3s kubectl get deployments -n flux-system --no-headers \
 echo "GPU visible to a pod"
 sudo k3s kubectl run check-platform-gpu --rm -i --restart=Never \
   --image=nvidia/cuda:12.6.0-base-ubuntu24.04 \
-  --limits=nvidia.com/gpu=1 --command -- nvidia-smi -L
+  --overrides='{"apiVersion":"v1","kind":"Pod","spec":{"containers":[{"name":"check-platform-gpu","image":"nvidia/cuda:12.6.0-base-ubuntu24.04","command":["nvidia-smi","-L"],"resources":{"limits":{"nvidia.com/gpu":"1"}}}]}}' \
+  --command -- nvidia-smi -L
 
 echo "NAS mounts present, non-root write proven"
 for share in __MOUNTS__; do

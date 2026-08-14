@@ -9,8 +9,10 @@
 # exists: this role installs the toolkit, it doesn't assume a container
 # runtime is already on the box to configure.
 #
-# Untested against real hardware, draft written for #68 while that ticket
-# is still ready-for-human. Verify against the real node before trusting it.
+# Verified against real hardware (#102): `ubuntu-drivers install --gpgpu`
+# does not install a `nvidia-driver-*` package (that's the desktop flavour's
+# name); it installs a `nvidia-headless-*` metapackage instead, e.g.
+# `nvidia-headless-no-dkms-595-server-open`.
 
 - name: Install ubuntu-drivers-common, needed for hardware-driver detection
   ansible.builtin.apt:
@@ -34,7 +36,7 @@
     executable: /bin/bash
     cmd: |
       set -o pipefail
-      dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' 'nvidia-driver-*' 2>/dev/null \
+      dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' 'nvidia-headless-*' 2>/dev/null \
         | awk '$1 == "ii" {print $2}'
   register: nvidia_driver_installed
   changed_when: false
