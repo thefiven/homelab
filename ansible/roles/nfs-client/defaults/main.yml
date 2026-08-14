@@ -21,13 +21,15 @@ nfs_client_local_root: /srv/immich
 
 # `_netdev` tells systemd this mount depends on the network being up before
 # it's attempted (matters at boot, before Tailscale/LAN is reachable);
-# `nfsvers=3` pins the protocol version explicitly rather than trusting
-# whatever the client and NAS negotiate by default — the DS412+ rejects
-# `nfsvers=4` (`mount.nfs: Protocol not supported`, #104), and a manual
-# probe with `nfsvers=3` was accepted; `rw` because Immich's normal Upload
-# route writes originals here, not just reads them (ADR-0010 rejected
-# External Library, the read-mostly pattern).
-nfs_client_mount_options: rw,_netdev,nfsvers=3
+# `nfsvers=4` pins the protocol version explicitly rather than trusting
+# whatever the client and NAS negotiate by default. The DS412+ originally
+# rejected it (`mount.nfs: Protocol not supported`, #104) because DSM's own
+# "Enable NFSv4.1 support" toggle was off, not because the hardware can't
+# do v4 — turned on in DSM (Control Panel > File Services > NFS), no
+# `nfsvers=3` fallback needed. `rw` because Immich's normal Upload route
+# writes originals here, not just reads them (ADR-0010 rejected External
+# Library, the read-mostly pattern).
+nfs_client_mount_options: rw,_netdev,nfsvers=4
 
 # The two exports ADR-0010 names explicitly. Same name on the NAS export,
 # under UPLOAD_LOCATION, and as this list's entries, so a mount's purpose
@@ -36,9 +38,16 @@ nfs_client_mounts:
   - upload
   - library
 
-# UID the second end-to-end check writes and reads as, to exercise a
-# Synology export's root-squash behaviour (#101) instead of only the
-# root-owned probe above. 1000 is Ubuntu's first normal-user UID and what
-# Immich's own container runs as, so a mount that accepts a write from this
-# UID is a mount Immich can actually use.
+# UID the second end-to-end check writes and reads as, to exercise
+# non-root write access (#101) instead of only the root-owned probe
+# above. 1000 is Ubuntu's first normal-user UID and what Immich's own
+# container runs as, so a mount that accepts a write from this UID is a
+# mount Immich can actually use.
+#
+# On the DS412+ this check fails even at mode 0777 with squash set to "No
+# mapping" (#104): non-root writes need an explicit "Everyone" entry with
+# Read/Write in DSM's own Permission tab (Control Panel > Shared Folder >
+# immich > [upload|library] > Properties > Permission), on each
+# subfolder — the POSIX mode bits alone aren't enough on this NAS. Nothing
+# this role can fix from the client side; a one-time NAS-side gesture.
 nfs_client_check_uid: 1000
