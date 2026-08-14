@@ -10,8 +10,31 @@ Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all op
 - **Comment on an issue**: `gh issue comment <number> --body "..."`
 - **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
 - **Close**: `gh issue close <number> --comment "..."`
+- **Edit an issue/PR body** (e.g. to tick an acceptance-criteria checkbox):
+  use the REST endpoint directly, not `gh issue edit --body` / `gh pr edit
+  --body`. Both of those go through GraphQL and this repo's GraphQL calls
+  fail with `Projects (classic) is being deprecated ...
+  (repository.issue.projectCards)` even on mutations unrelated to
+  projects. Workaround: `jq -n --rawfile body <file> '{body: $body}' | gh
+  api repos/<owner>/<repo>/issues|pulls/<n> -X PATCH --input -` (not `-f
+  body=@file`, which sends the literal `@path` string instead of reading
+  it).
 
 Infer the repo from `git remote -v` — `gh` does this automatically when run inside a clone.
+
+## Checking off acceptance criteria
+
+An issue or PR's AC checklist is a markdown task list in its body — `- [
+]` / `- [x]` is GitHub's own rendering, not a separate API object, so
+ticking a box is a body edit (see above). Before ticking any AC that
+describes the state of a real machine or cluster (a resource is
+schedulable, a service is running, a file exists on the NAS, ...), the
+underlying check must actually have been run against that machine — a
+merged PR or a written manifest is not by itself evidence the box is true.
+When an AC can't be verified yet (the change hasn't reached the machine —
+e.g. a Flux-managed change not yet merged to `main`, or the machine is
+unreachable), leave it unchecked and say why in a comment, along with what
+would unblock it.
 
 ## Pull requests as a triage surface
 
