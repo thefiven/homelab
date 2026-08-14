@@ -21,11 +21,13 @@ nfs_client_local_root: /srv/immich
 
 # `_netdev` tells systemd this mount depends on the network being up before
 # it's attempted (matters at boot, before Tailscale/LAN is reachable);
-# `nfsvers=4` pins the protocol version explicitly rather than trusting
-# whatever the client and NAS negotiate by default; `rw` because Immich's
-# normal Upload route writes originals here, not just reads them (ADR-0010
-# rejected External Library, the read-mostly pattern).
-nfs_client_mount_options: rw,_netdev,nfsvers=4
+# `nfsvers=3` pins the protocol version explicitly rather than trusting
+# whatever the client and NAS negotiate by default — the DS412+ rejects
+# `nfsvers=4` (`mount.nfs: Protocol not supported`, #104), and a manual
+# probe with `nfsvers=3` was accepted; `rw` because Immich's normal Upload
+# route writes originals here, not just reads them (ADR-0010 rejected
+# External Library, the read-mostly pattern).
+nfs_client_mount_options: rw,_netdev,nfsvers=3
 
 # The two exports ADR-0010 names explicitly. Same name on the NAS export,
 # under UPLOAD_LOCATION, and as this list's entries, so a mount's purpose
