@@ -1,0 +1,29 @@
+# Second Flux Kustomization, sibling to flux-system/'s own (ADR-0008,
+# ADR-0009, #101). flux-system's Kustomization (gotk-sync.yaml) reconciles
+# this file the same way it reconciles everything else directly under
+# clusters/homelab: no kustomization.yaml exists at that path, so
+# kustomize-controller generates one on the fly from every manifest it
+# finds in the tree.
+#
+# `path: ./workloads` is this repository's other top-level tree, where
+# each workload gets its own subdirectory (the first is workloads/smoke,
+# #101's SOPS decryption smoke test). `decryption` is what #21 never
+# actually wired up: without it, kustomize-controller applies SOPS
+# ciphertext as-is instead of decrypting it first. `secretRef.name:
+# sops-age` is the secret scripts/sops-age-bootstrap creates.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: workloads
+  namespace: flux-system
+spec:
+  interval: 10m0s
+  path: ./workloads
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  decryption:
+    provider: sops
+    secretRef:
+      name: sops-age

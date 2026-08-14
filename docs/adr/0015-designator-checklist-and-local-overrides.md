@@ -124,3 +124,17 @@ paying that cost — loosening the rule would buy nothing.
 keeping `*_secrets.yml` strictly for credentials. Rejected: two patterns to
 maintain for a distinction that does not change how either file is
 gitignored, loaded, or supplied to `ansible-playbook`.
+
+## Amendment, 2026-08-13
+
+The Consequences section's rejection of a `*_secrets.yml.example` (a
+`.example` file with commented-out keys and no values) argued it "would
+enumerate every automation-relevant designator this platform uses, in one
+file." That argument holds for *values* — a Synology export path, a real
+IP — and does not extend to *variable names*. A name like
+`nfs_client_check_uid` or `base_ntp_serve_subnet` is not a designator: it
+carries no information about this installation, and it is already public,
+one per role's own `defaults/main.yml`, committed and readable today.
+Nothing in this ADR blocks a role's defaults file, or a doc that reads
+from one, from naming what it needs — only a value belongs in the
+gitignored `*_secrets.yml`, never the name asking for it.

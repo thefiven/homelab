@@ -33,3 +33,10 @@ nfs_client_mount_options: rw,_netdev,nfsvers=4
 nfs_client_mounts:
   - upload
   - library
+
+# UID the second end-to-end check writes and reads as, to exercise a
+# Synology export's root-squash behaviour (#101) instead of only the
+# root-owned probe above. 1000 is Ubuntu's first normal-user UID and what
+# Immich's own container runs as, so a mount that accepts a write from this
+# UID is a mount Immich can actually use.
+nfs_client_check_uid: 1000
