@@ -15,7 +15,8 @@ goes stale.
    (source, kustomize, helm, notification controllers, ADR-0008) has all
    replicas ready.
 4. **GPU visible to a pod.** A pod requesting `nvidia.com/gpu` schedules
-   and can run `nvidia-smi` (`nvidia` role, #68).
+   and can run `nvidia-smi` (`nvidia` role, #68; NVIDIA k8s-device-plugin,
+   #105).
 5. **NAS mounts present, non-root write proven.** Both exports
    (`upload/`, `library/`, ADR-0010) are mounted, and a non-root UID can
    write and read back a file on each — not just root (`nfs-client` role,
