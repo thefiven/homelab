@@ -1,0 +1,10 @@
+# Defaults for the `gitops` role.
+
+# Daily age identity path scripts/sops-age-setup writes to (its own
+# SOPS_DIR/DAILY_KEY_FILE). Read on the control node, never on node1 — see
+# tasks/main.yml. SOPS_AGE_KEY_FILE overrides it outright; otherwise
+# XDG_CONFIG_HOME (or $HOME/.config) plus the fixed sops/age/keys.txt
+# suffix, the same precedence the deleted scripts/sops-age-bootstrap used.
+gitops_sops_age_key_file: >-
+  {{ lookup('env', 'SOPS_AGE_KEY_FILE')
+     or (lookup('env', 'XDG_CONFIG_HOME') or (lookup('env', 'HOME') ~ '/.config')) ~ '/sops/age/keys.txt' }}

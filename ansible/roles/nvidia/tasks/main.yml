@@ -136,9 +136,9 @@
 
 # `--tags verify`: proves the "GPU visible to a pod" invariant
 # (docs/reference/platform-state.md) next to the driver and toolkit it's
-# proving, moved verbatim in behaviour from scripts/check-platform's
-# heredoc (still there until the companion `gitops` ticket retires it):
-# schedule a real pod and run nvidia-smi inside it, not just read
+# proving, moved verbatim in behaviour from the deleted scripts/check-
+# platform's heredoc (#115): schedule a real pod and run nvidia-smi inside
+# it, not just read
 # status.allocatable on the node, so this keeps proving what #105 showed
 # matters: that a container can actually use the GPU. `argv`, not a shell
 # string, so the JSON --overrides value never has to survive a second
