@@ -23,7 +23,18 @@ k3s_channel: stable
 # (servicelb, traefik) in its own domain — extend this string
 # (space-separated `--disable=<name>` flags) when either lands, no template
 # needed for one more flag.
-k3s_server_exec_args: --disable=local-storage
+#
+# `--default-runtime=nvidia` (#105): k3s auto-detects nvidia-container-runtime
+# and registers it as an additional containerd runtime named `nvidia`, but
+# never makes it the default (confirmed against node1's own generated
+# containerd config and https://docs.k3s.io/advanced) — pods still run under
+# plain `runc`, so no NVIDIA driver libraries get injected unless a pod
+# explicitly sets `runtimeClassName: nvidia`. Setting the default here once,
+# node-wide, is one config line instead of patching every current and future
+# GPU manifest (the device plugin's own upstream manifest included) with that
+# field. Non-GPU pods are unaffected: nvidia-container-runtime passes through
+# to runc when no NVIDIA_VISIBLE_DEVICES is set on the container.
+k3s_server_exec_args: --disable=local-storage --default-runtime=nvidia
 
 # Agent mode only: which inventory host is the k3s server to join. No
 # default, same reasoning as k3s_role — set it in inventory or host_vars
