@@ -18,4 +18,3 @@ simulated.
 Issues are open for discussion; external pull requests are not currently
 treated as a request surface.
 
-<!-- ruleset verification: temporary PR, not merged -->
