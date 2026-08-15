@@ -14,3 +14,6 @@ runs on top of it yet: each one (Immich, observability, ingress, backup)
 is its own later ticket. Every ticket touching the physical node or NAS is
 human-in-the-loop; acceptance is checked against the real hardware, never
 simulated.
+
+Issues are open for discussion; external pull requests are not currently
+treated as a request surface.

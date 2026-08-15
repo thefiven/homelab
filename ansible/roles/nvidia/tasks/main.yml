@@ -162,7 +162,9 @@
       - -i
       - --restart=Never
       - --image={{ nvidia_gpu_check_image }}
-      - --overrides={"apiVersion":"v1","kind":"Pod","spec":{"containers":[{"name":"nvidia-verify-gpu","image":"{{ nvidia_gpu_check_image }}","command":["nvidia-smi","-L"],"resources":{"limits":{"nvidia.com/gpu":"1"}}}]}}
+      - >-
+        --overrides={"apiVersion":"v1","kind":"Pod","spec":{"containers":[{"name":"nvidia-verify-gpu","image":"{{ nvidia_gpu_check_image }}",
+        "command":["nvidia-smi","-L"],"resources":{"limits":{"nvidia.com/gpu":"1"}}}]}}
       - --command
       - --
       - nvidia-smi
