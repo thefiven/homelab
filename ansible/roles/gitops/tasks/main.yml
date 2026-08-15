@@ -136,12 +136,7 @@
     # (docs/reference/platform-state.md), replacing the deleted
     # scripts/check-platform's bash-over-SSH awk column comparison. `-o
     # jsonpath`, the same convention the `k3s`/`nvidia`/`zfs` roles' own
-    # verify checks use, not kubernetes.core. The backreference `\1` in the
-    # assert below does the ready-equals-desired comparison: it only
-    # matches a line whose second and third tab-separated fields are
-    # identical and non-empty, so a Deployment with 0 of 1 ready (jsonpath
-    # emits an empty readyReplicas field) fails to match, same as one
-    # reporting 1 of 2.
+    # verify checks use, not kubernetes.core.
     - name: Read every Flux controller Deployment's ready vs desired replica count
       ansible.builtin.command:
         argv:
@@ -164,14 +159,28 @@
           # Non-empty first: unlike the k3s role's node-Ready check, which
           # is guaranteed at least one row (the node running the command
           # is always listed), a missing or emptied flux-system namespace
-          # returns zero lines here, which `reject(...) | list == []`
-          # below would otherwise hold vacuously — reporting "healthy"
-          # when no controller was found at all.
+          # returns zero lines here, which the second condition below
+          # would otherwise hold vacuously — reporting "healthy" when no
+          # controller was found at all.
           - gitops_flux_deployments.stdout_lines | length > 0
+          # Strips the name, tab-splits what's left into [ready, desired],
+          # and keeps only pairs where the two differ (`unique` collapses
+          # a matching pair to length 1) — an empty readyReplicas field
+          # (0 ready, jsonpath omits it) never equals a non-empty desired
+          # count, so it's kept too. A capture-group backreference
+          # (`^\S+\t(\S+)\t\1$`) does the same comparison in principle,
+          # but empirically fails here — verified against real node1
+          # output where every controller was genuinely 1/1 ready, this
+          # `assert` still evaluated it to false while the identical
+          # pattern under a plain `debug: msg` did not; not chased further,
+          # this tab-split form is what was actually proven against
+          # real hardware.
           - >-
             gitops_flux_deployments.stdout_lines
-            | reject('match', '^\S+\t(\S+)\t\1$')
-            | list == []
+            | map('regex_replace', '^\S+\t', '')
+            | map('split', '\t')
+            | map('unique') | map('length')
+            | select('gt', 1) | list == []
         fail_msg: >-
           Not every Flux controller Deployment is fully ready (or none
           found): {{ gitops_flux_deployments.stdout }}
