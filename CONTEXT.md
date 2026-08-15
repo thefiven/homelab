@@ -20,6 +20,22 @@ matters — a workload's internals are out of scope for a platform decision.
 The named workloads this platform has committed to running. Membership is decided,
 not discovered: a service enters or leaves it by an ADR.
 
+### Verification
+
+**Hardware-free check**:
+A check that runs without touching the physical node or NAS: what
+`scripts/check` runs, and the only kind of check CI is capable of running.
+_Avoid_: test, test suite. This repository doesn't use those words for it.
+
+**Platform verify**:
+An `ansible` `--tags verify` task, run against the real node to prove one of
+the platform's invariants already holds (a ZFS pool is ONLINE, the k3s node
+is Ready, Flux's controllers are healthy...) rather than to mutate anything.
+See [docs/reference/platform-state.md](./docs/reference/platform-state.md).
+Human-in-the-loop by nature: it needs the real machine, so CI can never run
+it. "CI is green" and "the platform verify passed on node1" are never the
+same claim.
+
 ### The resource budget
 
 The first three terms below are routinely conflated and mean different things.
