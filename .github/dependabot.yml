@@ -1,0 +1,9 @@
+# github-actions only (ADR-0016, #124): the one dependency surface this
+# repository has that Dependabot can meaningfully track (pinned action
+# SHAs). No auto-merge — bump PRs get the same review as any other change.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

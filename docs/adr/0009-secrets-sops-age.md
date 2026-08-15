@@ -138,6 +138,14 @@ backstop for everything that structure doesn't cover. GitHub's own secret
 scanning and push protection sit behind both, as the ticket's framing intends,
 not as the primary control.
 
+**Amendment, 2026-08-15 (ADR-0016, #124):** the paragraph above described a
+design that had never actually executed — no local hook was installed, and
+nothing ran these two layers anywhere. ADR-0016 wires both hooks into an
+installed `pre-commit` config and adds a required CI job that runs the exact
+same config on every PR and push to `main`, closing that gap. The two-layer
+design itself is unchanged; only its execution status moves from
+aspirational to enforced.
+
 ## Encryption scope: partial, not whole-file
 
 Flux's suggested `--encrypted-regex '^(data|stringData)$'` encrypts only a

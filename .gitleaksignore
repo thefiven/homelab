@@ -1,0 +1,4 @@
+# age public key, not a secret by definition (ADR-0009): a placeholder
+# example from Flux's own SOPS guide, quoted verbatim in the research notes
+# to show age-keygen's output shape.
+docs/reference/research-secrets-on-a-public-repo.md:generic-api-key:142
