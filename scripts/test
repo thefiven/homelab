@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Runs every hardware-free self-check in the repo (#116), stopping at the
+# first failure — the one entry point a contributor or CI job runs instead
+# of invoking each script's --self-check separately.
+set -euo pipefail
+DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+"$DIR/provision-state-pool" --self-check
+"$DIR/build-media" --self-check
+"$DIR/check-sops-secrets-test"
