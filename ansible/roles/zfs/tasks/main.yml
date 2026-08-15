@@ -351,11 +351,10 @@
 
 # `--tags verify`: proves the "ZFS pools ONLINE" invariant
 # (docs/reference/platform-state.md) with the same tool this role already
-# trusts to read pool state, not the bash-over-SSH duplicate in
-# scripts/check-platform (still there until the companion `gitops` ticket
-# retires it). Read-only, so it doesn't depend on the import/create logic
-# above and can run against a pool this role never had to create or import
-# this pass.
+# trusts to read pool state, not the bash-over-SSH duplicate in the
+# deleted scripts/check-platform (#115). Read-only, so it doesn't depend
+# on the import/create logic above and can run against a pool this role
+# never had to create or import this pass.
 - name: Read ZFS pool health
   ansible.builtin.command:
     cmd: zpool list -H -o name,health

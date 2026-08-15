@@ -16,4 +16,5 @@
     - tailscale   # enrollment
     - nvidia      # driver + nvidia-container-toolkit (#68), before k3s so the runtime exists at k3s's first start
     - k3s         # server/agent mode (#70)
+    - gitops      # Flux health + sops-age secret (#115), needs a running k3s
     - nfs-client  # NAS mounts for Immich originals (#69)

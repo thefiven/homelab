@@ -169,11 +169,11 @@
   notify: Update grub
 
 # `--tags verify`: proves the "no pending reboot" invariant
-# (docs/reference/platform-state.md), replacing scripts/check-platform's
-# bash-over-SSH `[ ! -f /var/run/reboot-required ]` (still there until the
-# companion `gitops` ticket retires it). Lands in `base`, not any of the
-# other roles this ticket touches: a pending reboot is baseline node state,
-# not something any single role establishes.
+# (docs/reference/platform-state.md), replacing the deleted scripts/check-
+# platform's bash-over-SSH `[ ! -f /var/run/reboot-required ]` (#115).
+# Lands in `base`, not any of the other roles this ticket touches: a
+# pending reboot is baseline node state, not something any single role
+# establishes.
 - name: Check whether a reboot is pending
   ansible.builtin.stat:
     path: /var/run/reboot-required

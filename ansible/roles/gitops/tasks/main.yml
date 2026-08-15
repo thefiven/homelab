@@ -1,0 +1,179 @@
+---
+# Role `gitops`: proves two of the platform's seven invariants (Flux
+# controllers healthy, `sops-age` secret present) and creates/updates the
+# `sops-age` secret itself (#115, ADR-0008, ADR-0009). Absorbs
+# scripts/sops-age-bootstrap's behaviour, now deleted; scripts/check-
+# platform's Flux and sops-age checks move here too (its GPU check moved
+# into `nvidia` under #114, and it is deleted entirely by this change).
+#
+# Everything below only runs on the k3s server (node1, ADR-0007: one
+# server, forever) — the same `k3s_role == 'server'` gate the `k3s` role's
+# own server-mode block uses, not `| default('')`: this role runs after
+# `k3s` in site.yml, so `k3s`'s own assert (tagged always) has already
+# failed loudly for any host with k3s_role unset by the time this block
+# runs.
+- name: Prove and maintain GitOps state on the k3s server
+  when: k3s_role == 'server'
+  block:
+    # Read-only, no_log-free: this task's own output stays visible on
+    # failure, unlike the secret task below it. Gates that task, not the
+    # `--tags verify` checks further down — `scripts/flux-bootstrap`
+    # remains a separate, manual gesture (#115's own decision), so a fresh
+    # node's first-ever `ansible-playbook site.yml` run (ADR-0013 gesture
+    # 7) reaches this role before Flux exists. A missing namespace there
+    # is fine to skip past quietly rather than aborting the whole play
+    # (and with it every role listed after `gitops`, `nfs-client`
+    # included) — it's the opposite for `--tags verify`: a missing
+    # namespace is a genuine "Flux controllers healthy"/"sops-age secret
+    # present" invariant violation, so those checks are left ungated and
+    # fail for real.
+    - name: Check whether the flux-system namespace exists
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - get
+          - namespace
+          - flux-system
+      register: gitops_flux_namespace
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Create or update the sops-age secret, once Flux is bootstrapped
+      when: gitops_flux_namespace.rc == 0
+      block:
+        # "On the control node" is what delegate_to: localhost means here:
+        # the daily identity (scripts/sops-age-setup's output) lives on
+        # the operator's own machine, never in inventory or host_vars
+        # (ADR-0015). become: false — this file belongs to the control
+        # node's own user, not node1's admin account that play-level
+        # become targets.
+        - name: Check whether the daily age identity exists on the control node
+          ansible.builtin.stat:
+            path: "{{ gitops_sops_age_key_file }}"
+          delegate_to: localhost
+          become: false
+          register: gitops_sops_age_key_stat
+
+        - name: Assert the daily age identity exists on the control node
+          ansible.builtin.assert:
+            that: gitops_sops_age_key_stat.stat.exists
+            fail_msg: >-
+              Daily age identity not found at {{ gitops_sops_age_key_file }} on
+              the control node. Run scripts/sops-age-setup first.
+            quiet: true
+
+        - name: Read the daily age identity from the control node
+          ansible.builtin.slurp:
+            src: "{{ gitops_sops_age_key_file }}"
+          delegate_to: localhost
+          become: false
+          register: gitops_sops_age_key_raw
+          no_log: true
+
+        # `stdin`, not a file templated onto node1 first: the guarantee
+        # this task must not regress (ADR-0009, the deleted script's own
+        # header comment) is that the key never lands in a file on node1.
+        # With ansible.cfg's `pipelining = True` (#114, a hard
+        # prerequisite for this task specifically), this module's own
+        # arguments — stdin content included — go straight to the remote
+        # Python interpreter over the existing SSH session, never through
+        # a temp file under ~/.ansible/tmp. `create --dry-run=client -o
+        # yaml | apply -f -` is apply's idempotency, not create's, same
+        # shape the deleted script used; no `sudo` prefix needed, site.yml's
+        # play-level `become: true` already covers it. no_log covers the
+        # whole task, not just the stdin arg (Ansible has no finer knob),
+        # so a failure here is opaque by necessity — same trade-off the
+        # `k3s` role's own no_log'd token task already accepts; the
+        # namespace check above is what surfaces the common failure cause
+        # (Flux not bootstrapped yet) before ever reaching this task.
+        - name: Create or update the sops-age secret from the daily age identity
+          ansible.builtin.shell:
+            executable: /bin/bash
+            cmd: |
+              set -o pipefail
+              k3s kubectl create secret generic sops-age \
+                --namespace=flux-system \
+                --from-file=age.agekey=/dev/stdin \
+                --dry-run=client -o yaml \
+              | k3s kubectl apply -f -
+            stdin: "{{ gitops_sops_age_key_raw.content | b64decode }}"
+          register: gitops_sops_age_apply
+          changed_when: "'unchanged' not in gitops_sops_age_apply.stdout"
+          no_log: true
+
+    # `--tags verify`: proves the "sops-age secret present" invariant
+    # (docs/reference/platform-state.md), replacing the deleted
+    # scripts/check-platform's `k3s kubectl get secret sops-age -n
+    # flux-system >/dev/null`. Existence only, same as that check — the
+    # create/apply task above is what keeps its *content* current.
+    - name: Check whether the sops-age secret exists
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - get
+          - secret
+          - sops-age
+          - -n
+          - flux-system
+      register: gitops_sops_age_secret
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      tags: verify
+
+    - name: Assert the sops-age secret is present
+      ansible.builtin.assert:
+        that: gitops_sops_age_secret.rc == 0
+        fail_msg: >-
+          sops-age secret not present in flux-system: {{ gitops_sops_age_secret.stderr }}
+        quiet: true
+      tags: verify
+
+    # `--tags verify`: proves the "Flux controllers healthy" invariant
+    # (docs/reference/platform-state.md), replacing the deleted
+    # scripts/check-platform's bash-over-SSH awk column comparison. `-o
+    # jsonpath`, the same convention the `k3s`/`nvidia`/`zfs` roles' own
+    # verify checks use, not kubernetes.core. The backreference `\1` in the
+    # assert below does the ready-equals-desired comparison: it only
+    # matches a line whose second and third tab-separated fields are
+    # identical and non-empty, so a Deployment with 0 of 1 ready (jsonpath
+    # emits an empty readyReplicas field) fails to match, same as one
+    # reporting 1 of 2.
+    - name: Read every Flux controller Deployment's ready vs desired replica count
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - get
+          - deployments
+          - -n
+          - flux-system
+          - -o
+          - jsonpath={range .items[*]}{.metadata.name}{"\t"}{.status.readyReplicas}{"\t"}{.status.replicas}{"\n"}{end}
+      register: gitops_flux_deployments
+      changed_when: false
+      check_mode: false
+      tags: verify
+
+    - name: Assert every Flux controller Deployment is fully ready
+      ansible.builtin.assert:
+        that:
+          # Non-empty first: unlike the k3s role's node-Ready check, which
+          # is guaranteed at least one row (the node running the command
+          # is always listed), a missing or emptied flux-system namespace
+          # returns zero lines here, which `reject(...) | list == []`
+          # below would otherwise hold vacuously — reporting "healthy"
+          # when no controller was found at all.
+          - gitops_flux_deployments.stdout_lines | length > 0
+          - >-
+            gitops_flux_deployments.stdout_lines
+            | reject('match', '^\S+\t(\S+)\t\1$')
+            | list == []
+        fail_msg: >-
+          Not every Flux controller Deployment is fully ready (or none
+          found): {{ gitops_flux_deployments.stdout }}
+        quiet: true
+      tags: verify
