@@ -53,6 +53,33 @@
   when: nvidia_driver_installed.stdout_lines | length == 0
   changed_when: true
 
+# The gpgpu driver metapackage's headless-* flavour ships no host binaries
+# at all, nvidia-smi included: confirmed against real hardware (#105) when
+# scripts/check-platform's own GPU pod hit "exec: nvidia-smi: executable
+# file not found in $PATH" — the binary was missing on the host, so
+# nvidia-container-toolkit's utility mount (NVIDIA_DRIVER_CAPABILITIES=
+# utility) had nothing to bind-mount into the container.
+# nvidia-utils-<version>-server is the separate package that ships it.
+# Its version is read back from whichever nvidia-headless-* package the
+# task above actually installed, same reasoning as that task's own
+# --gpgpu pick: never hardcode a driver version to go stale.
+- name: List NVIDIA headless driver packages now installed
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -o pipefail
+      dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' 'nvidia-headless-*' 2>/dev/null \
+        | awk '$1 == "ii" {print $2}'
+  register: nvidia_headless_installed
+  changed_when: false
+  failed_when: nvidia_headless_installed.stdout_lines | length == 0
+  check_mode: false
+
+- name: Install the matching nvidia-utils package (provides nvidia-smi)
+  ansible.builtin.apt:
+    name: "nvidia-utils-{{ nvidia_headless_installed.stdout_lines[0] | regex_search('[0-9]+') }}-server"
+    state: present
+
 # Source: NVIDIA's documented apt install
 # (https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
 # The key is ASCII-armored at this URL, unlike Tailscale's already-dearmored
