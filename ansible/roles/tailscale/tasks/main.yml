@@ -14,6 +14,7 @@
       (see defaults/main.yml); generate a reusable, pre-approved key in the
       Tailscale admin console and set it in inventory or host_vars before
       running against a real host.
+  tags: always
 
 # Exact URL shape (source: pkgs.tailscale.com's own install script) —
 # {track}/{os}/{codename}.noarmor.gpg for the keyring, matching

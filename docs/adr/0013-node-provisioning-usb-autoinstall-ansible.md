@@ -112,7 +112,10 @@ secrets with no live source to query.
 
 **Where Ansible takes over (gesture 7, the last manual one):**
 
-7. `ansible-playbook site.yml -l <host>`. Everything else is unattended:
+7. `ansible-playbook ansible/site.yml -l <host>`, run from the repo root
+   (the committed `ansible.cfg` there is what makes `-l` resolve against
+   `ansible/inventory.yml` instead of silently targeting nothing).
+   Everything else is unattended:
    base hardening (packages, SSH, chrony, unattended-upgrades, GRUB, the
    ESP/ZFS mount-order fix), ZFS state-pool creation with its ARC cap and
    `sanoid` snapshots, Tailscale enrollment, the NVIDIA driver, k3s agent

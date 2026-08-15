@@ -1,0 +1,8 @@
+# Defaults for the `nvidia` role.
+
+# Image the `--tags verify` GPU-visible-to-a-pod check schedules
+# (tasks/main.yml) to prove a container can actually use the GPU, not
+# merely that the scheduler thinks it can (#105). Named here, not a
+# literal in tasks/main.yml, so it can be corrected without reading task
+# code, same convention every other role's defaults file follows.
+nvidia_gpu_check_image: nvidia/cuda:12.6.0-base-ubuntu24.04

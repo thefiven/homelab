@@ -133,3 +133,41 @@
     name: nvidia-container-toolkit
     state: present
     update_cache: "{{ nvidia_container_toolkit_repo_file.changed }}"
+
+# `--tags verify`: proves the "GPU visible to a pod" invariant
+# (docs/reference/platform-state.md) next to the driver and toolkit it's
+# proving, moved verbatim in behaviour from scripts/check-platform's
+# heredoc (still there until the companion `gitops` ticket retires it):
+# schedule a real pod and run nvidia-smi inside it, not just read
+# status.allocatable on the node, so this keeps proving what #105 showed
+# matters: that a container can actually use the GPU. `argv`, not a shell
+# string, so the JSON --overrides value never has to survive a second
+# round of shell quoting.
+#
+# Runs only where a local kubeconfig exists to schedule against, a server
+# in this platform's current single-node topology (agent mode isn't
+# exercised yet, see the `k3s` role's header note). `| default('')`, not a
+# bare `k3s_role == 'server'`: this role runs before `k3s` in site.yml, so
+# on a host where k3s_role is still unset this must skip quietly rather
+# than crash on an undefined variable ahead of the `k3s` role's own,
+# friendlier assert.
+- name: Prove the GPU is visible to a scheduled pod
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - run
+      - nvidia-verify-gpu
+      - --rm
+      - -i
+      - --restart=Never
+      - --image={{ nvidia_gpu_check_image }}
+      - --overrides={"apiVersion":"v1","kind":"Pod","spec":{"containers":[{"name":"nvidia-verify-gpu","image":"{{ nvidia_gpu_check_image }}","command":["nvidia-smi","-L"],"resources":{"limits":{"nvidia.com/gpu":"1"}}}]}}
+      - --command
+      - --
+      - nvidia-smi
+      - -L
+  register: nvidia_gpu_verify
+  changed_when: false
+  when: k3s_role | default('') == 'server'
+  tags: verify

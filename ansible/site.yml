@@ -1,5 +1,9 @@
 ---
-# Master playbook (ADR-0013, gesture 7): ansible-playbook site.yml -l <host>
+# Master playbook (ADR-0013, gesture 7), run from the repo root so the
+# committed ../ansible.cfg is discovered:
+#   ansible-playbook ansible/site.yml -l <host>
+# Add --tags verify to prove the platform's invariants instead of mutating
+# it (docs/reference/platform-state.md).
 #
 # Role list is ADR-0013's decision. Uncomment each remaining role as it's
 # authored, this file is the template they land in, not a stub to replace.
