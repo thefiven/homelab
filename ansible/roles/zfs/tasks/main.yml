@@ -30,263 +30,37 @@
     update_cache: true
     cache_valid_time: 3600
 
-# `ID_SERIAL` is the one discriminant ADR-0013 trusts to survive a disk
-# being moved to a different slot or enumerated in a different order.
-# `/dev/disk/by-id/` is what `zpool create` should receive too, for the same
-# reason — `/dev/nvmeXn1` is what ZFS would otherwise cache and lose.
-#
-# `eui.*` links are skipped because they name the same disk again under its
-# native NVMe identifier — keeping them would double-count one piece of
-# hardware. `-part*` links are skipped because the whole disk is wanted:
-# that is what lets ZFS own the partitioning and the write cache itself.
-- name: Resolve the state disk from its serial number
-  ansible.builtin.shell:
-    executable: /bin/bash
-    cmd: |
-      set -euo pipefail
-      shopt -s nullglob
-      for link in /dev/disk/by-id/nvme-*; do
-        case "$link" in *eui.*|*-part*) continue ;; esac
-        serial=$(udevadm info --query=property --name="$link" |
-                 sed -n 's/^ID_SERIAL=//p')
-        if [ "$serial" = "{{ zfs_state_disk_serial }}" ]; then
-          printf '%s\n' "$link"
-        fi
-      done
-  register: zfs_state_disk_links
-  changed_when: false
-  check_mode: false
+# #116 extracted the designation/import/create logic (formerly fifteen
+# tasks resolving the disk, importing, classifying failures, force-
+# importing on a hostid mismatch, creating, and verifying the backing
+# device) into scripts/provision-state-pool, so that logic can be exercised
+# by `--self-check` without an NVMe carrying, or not carrying, a matching
+# pool. Behaviour is unchanged; only where it lives moved.
+- name: Copy the state-pool provisioning script to the node
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../scripts/provision-state-pool"
+    dest: /usr/local/sbin/provision-state-pool
+    owner: root
+    group: root
+    mode: "0750"
 
-# A serial that matches nothing means this is not the machine it's assumed
-# to be, or the disk has been replaced. Continuing would mean writing at
-# random to whatever disk happens to be left — refuse instead.
-- name: Fail unless that serial number designates a disk
-  ansible.builtin.assert:
-    that: zfs_state_disk_links.stdout_lines | length > 0
-    fail_msg: >-
-      No disk on this host has ID_SERIAL={{ zfs_state_disk_serial }}. Read
-      the real value off the machine and correct zfs_state_disk_serial
-      before rerunning.
-    quiet: true
-
-# Multiple *links* for one disk are normal — udev adds one per naming
-# convention. What must be unique is the *disk* those links resolve to.
-- name: Resolve those links down to actual disks
-  ansible.builtin.shell:
-    executable: /bin/bash
-    cmd: >-
-      set -euo pipefail
-      && readlink -f {{ zfs_state_disk_links.stdout_lines | map('quote') | join(' ') }}
-      | sort -u
-  register: zfs_state_disk_devices
-  changed_when: false
-  check_mode: false
-
-- name: Fail unless those links all point at the same disk
-  ansible.builtin.assert:
-    that: zfs_state_disk_devices.stdout_lines | length == 1
-    fail_msg: >-
-      {{ zfs_state_disk_serial }} designates
-      {{ zfs_state_disk_devices.stdout_lines | length }} distinct disks
-      ({{ zfs_state_disk_devices.stdout_lines | join(', ') }}). That serial is
-      not the stable discriminant it's assumed to be — nothing will be
-      written until this is resolved.
-    quiet: true
-
-- name: Remember the by-id path of the state disk
-  ansible.builtin.set_fact:
-    zfs_state_disk: "{{ zfs_state_disk_links.stdout_lines | first }}"
-
-- name: List the pools already imported
-  ansible.builtin.command:
-    cmd: zpool list -H -o name
-  register: zfs_imported_pools
-  changed_when: false
-  check_mode: false
-
-# Import-before-create is what makes this role safe to rerun. A pool can
-# exist on the disk without being imported — a lost cache, a moved disk, a
-# machine reinstalled on top — and in that state `zpool list` doesn't see
-# it, so a bare `zpool create` would happily overwrite it: exactly the
-# scenario that destroys the one irreplaceable dataset. A first install on a
-# blank disk fails this import, which is the nominal case, not an error —
-# the next task re-reads real state rather than trusting this one's rc.
-#
-# `-d` takes the `/dev/disk/by-id` *directory*, never the whole-disk link:
-# `zpool create` on a whole disk places its labels inside partition 1, not
-# at the offsets a whole-disk probe would read. Scoping `-d` to the disk
-# link would therefore never find anything, falling through to `-f` on the
-# next task and destroying the very pool this guard exists to protect.
-#
-# No `-N`: the pool should come up *mounted*, so every later task in this
-# role sees it at its real mountpoint instead of writing beside an empty
-# directory.
-#
-# `LC_ALL=C` matters because the next task decides on stderr *text* — a
-# translated locale would never produce the expected phrase, and the role
-# would refuse to proceed even on a genuinely blank disk.
-- name: Import the state pool if it already exists on that disk
-  ansible.builtin.command:
-    cmd: zpool import -d /dev/disk/by-id {{ zfs_state_pool | quote }}
-  environment:
-    LC_ALL: C
-  register: zfs_state_import
-  failed_when: false
-  changed_when: zfs_state_import.rc == 0
-  when: zfs_state_pool not in zfs_imported_pools.stdout_lines
-
-- name: List the pools again, now that an import may have happened
-  ansible.builtin.command:
-    cmd: zpool list -H -o name
-  register: zfs_imported_pools
-  changed_when: false
-  check_mode: false
-
-# An import that fails while reporting it *saw* the pool is generally the
-# dangerous case: labels present but the pool unusable (a disk
-# mid-replacement, a pool version too new). Creating over that would destroy
-# the Postgres database. One shape of that failure is recognized as safe to
-# retry, though: "pool was previously in use from another system" is what
-# ZFS says when the pool's last-imported hostid (baked into its labels at
-# creation) no longer matches this host's /etc/hostid, exactly what a
-# system-disk-only reinstall produces, since Subiquity writes a fresh hostid
-# but leaves an untouched state disk's labels pointing at the old one. Every
-# other unrecognized failure still stops here for a human to look at.
-- name: Note whether the import failure looks like a hostid mismatch
-  ansible.builtin.set_fact:
-    zfs_state_hostid_mismatch: >-
-      {{ zfs_state_pool not in zfs_imported_pools.stdout_lines and
-         'pool was previously in use from another system' in (zfs_state_import.stderr | default('')) }}
-
-# The discriminant is the phrase "no such pool available", never whether the
-# pool's name appears in the message — ZFS writes `cannot import 'state': no
-# such pool available` for a blank disk too, so matching on the name alone
-# would mistake absence for presence and block every first install. An empty
-# stderr with a nonzero return code also fails this: against a disk that
-# might carry the one irreplaceable dataset, refusing to create is the only
-# safe response to an error this role doesn't recognize.
-- name: Fail unless the import failure is a recognized shape (absent, or hostid mismatch)
-  ansible.builtin.assert:
-    that: >-
-      ('no such pool available' in (zfs_state_import.stderr | default(''))) or
-      zfs_state_hostid_mismatch
-    fail_msg: >-
-      zpool import did not report the pool "{{ zfs_state_pool }}" as absent,
-      but also failed to import it:
-      {{ zfs_state_import.stderr | default('') | trim }}
-      Nothing will be created or force-imported over it. Diagnose by hand
-      with `zpool import -d /dev/disk/by-id`.
-    quiet: true
-  when: zfs_state_pool not in zfs_imported_pools.stdout_lines
-
-# A hostid mismatch means the pool's own labels still point at the host that
-# last had it imported, and a reinstall always leaves a fresh /etc/hostid on
-# the system disk without touching the state disk. `-f` overrides that
-# stale-ownership refusal only; it does not create or touch labels. It
-# trusts the same stderr text the assert above already required to reach
-# this task, not an independent proof of origin: a state disk shared with,
-# or still actively imported on, another live host would produce this exact
-# message too and would be force-imported here regardless. That risk is
-# accepted for this role's actual topology, a single physical disk in one
-# machine, never shared or multihost storage; the backing-device check
-# further down still catches a same-named pool that turns out to live on the
-# wrong disk, same as every other path through this role.
-- name: Force-import the state pool after a hostid mismatch (reinstalled system disk)
-  ansible.builtin.command:
-    cmd: zpool import -f -d /dev/disk/by-id {{ zfs_state_pool | quote }}
-  environment:
-    LC_ALL: C
-  register: zfs_state_force_import
-  changed_when: true
-  when: zfs_state_hostid_mismatch
-
-# Unconditional, not guarded on zfs_state_hostid_mismatch: a skipped task
-# still registers a result, but a skipped command's result is a bare dict
-# with no stdout_lines, and every later task's `when` reads
-# zfs_imported_pools.stdout_lines. Guarding this listing crashes the very
-# next task (`Create the state pool`) on the ordinary run where nothing
-# needed force-importing — found by actually running a second pass against
-# real hardware. The extra `zpool list` on that path is the cost of keeping
-# this variable valid for every task after it.
-- name: List the pools again, now that the forced import happened
-  ansible.builtin.command:
-    cmd: zpool list -H -o name
-  register: zfs_imported_pools
-  changed_when: false
-  check_mode: false
-
-# `-f` is required, not a convenience: a state disk can carry a stale
-# non-ZFS signature from an earlier life (a previous filesystem, an old
-# partition table) that `zpool create` would otherwise refuse to write over.
-# The guard above is what makes `-f` safe here — by this point the disk has
-# already been confirmed to hold no importable pool, so the only thing `-f`
-# can be bypassing is that stale signature, never a live pool.
-#
-# `cachefile` is set explicitly, not left to the default, so the guarantee
-# that the pool survives a reboot (`zfs-import-cache.service` only mounts
-# what it finds there) is legible in this file rather than inherited from
-# Ubuntu's packaging.
-- name: Create the state pool on the bare disk
+# `changed_when` keys off the same "No change detected" idiom
+# k3s/tasks/main.yml's changed_when already uses, reused rather than
+# invented twice. A non-zero exit (multiple disks for one serial, an
+# unrecognized import failure, a same-named pool backed by the wrong disk)
+# fails this task with the script's own diagnostic detail — nothing here
+# recovers from a refusal the script already decided on.
+- name: Provision the state pool (import existing, create on a bare disk, verify the backing device)
   ansible.builtin.command:
     cmd: >-
-      zpool create -f
-      -o ashift=12
-      -o cachefile=/etc/zfs/zpool.cache
+      /usr/local/sbin/provision-state-pool
+      --serial {{ zfs_state_disk_serial | quote }}
+      --pool {{ zfs_state_pool | quote }}
       {% for key, value in zfs_state_pool_root_properties.items() %}
       -O {{ key }}={{ value }}
       {% endfor %}
-      {{ zfs_state_pool | quote }} {{ zfs_state_disk | quote }}
-  when: zfs_state_pool not in zfs_imported_pools.stdout_lines
-  changed_when: true
-
-# Every guard above resolves *a disk* from the serial; none of them, on
-# their own, guarantee the pool this role is about to configure actually
-# lives on it. `zpool import -d /dev/disk/by-id` searches that whole
-# directory for a pool named right, not just the verified disk — and a pool
-# already imported before this role ever ran (at boot, by
-# zfs-import-cache.service) skips the create/import block above entirely,
-# with no check on which disk it came from. This is the task that closes
-# that gap, for both paths at once: whatever "{{ zfs_state_pool }}" turns
-# out to be backed by, it must resolve to the same disk the serial matched,
-# or nothing past this point is allowed to touch it.
-# `zpool create` on a whole-disk link auto-partitions it (labels live in
-# partition 1), so `zpool status` reports the pool as backed by
-# `.../nvme1n1p1`, never the whole-disk path `zfs_state_disk_devices`
-# resolved. Comparing those directly fails every real create, which is what
-# the first real run against real hardware found. `lsblk -no pkname` walks a
-# partition back to its parent disk; a device with no parent (already a
-# whole disk, e.g. an imported pool that predates partitioning) falls
-# through to itself unchanged.
-- name: Resolve the state pool's actual backing device
-  ansible.builtin.shell:
-    executable: /bin/bash
-    cmd: |
-      set -euo pipefail
-      zpool status -P {{ zfs_state_pool | quote }} \
-        | awk '$1 ~ /^\// { print $1 }' \
-        | xargs -r readlink -f \
-        | while read -r dev; do
-            pkname=$(lsblk -no pkname "$dev" 2>/dev/null)
-            if [ -n "$pkname" ]; then printf '/dev/%s\n' "$pkname"; else printf '%s\n' "$dev"; fi
-          done \
-        | sort -u
-  register: zfs_state_pool_backing_devices
-  changed_when: false
-  check_mode: false
-
-- name: Fail unless the state pool is backed by the serial-matched disk
-  ansible.builtin.assert:
-    that:
-      - zfs_state_pool_backing_devices.stdout_lines | length == 1
-      - zfs_state_pool_backing_devices.stdout_lines | first == zfs_state_disk_devices.stdout_lines | first
-    fail_msg: >-
-      The pool "{{ zfs_state_pool }}" is backed by
-      {{ zfs_state_pool_backing_devices.stdout_lines | join(', ') }}, not the
-      disk resolved from zfs_state_disk_serial
-      ({{ zfs_state_disk_devices.stdout_lines | first }}). Refusing to touch
-      ARC, datasets or trim for a pool that isn't confirmed to live on the
-      serial-matched disk.
-    quiet: true
+  register: zfs_provision_result
+  changed_when: "'No change detected' not in zfs_provision_result.stdout"
 
 # Why 5 GiB and not the OpenZFS default: defaults/main.yml.
 - name: Read the ARC cap currently in force
