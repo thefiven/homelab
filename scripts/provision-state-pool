@@ -327,7 +327,7 @@ EOF
   echo "self-check: passed"
 }
 
-serial= pool= self_check_mode=0
+serial='' pool='' self_check_mode=0
 declare -a props=()
 while [[ $# -gt 0 ]]; do
   case "$1" in

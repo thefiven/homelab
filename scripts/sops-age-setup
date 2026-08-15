@@ -7,6 +7,7 @@
 # a wizard's inlined copy of it. After a /wizard regeneration inlines the
 # library back in, replace it with this source line before committing.
 
+# shellcheck source=lib/wizard.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/wizard.sh"
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -149,9 +150,9 @@ note "wrote $REPO_ROOT/.sops.yaml"
 
 # ── Stage 5: test encrypted secret ─────────────────────────────────────────
 stage "Test encrypted secret"
-mkdir -p "$REPO_ROOT/secrets"
-plain="$REPO_ROOT/secrets/test-secret.yaml"
-encrypted="$REPO_ROOT/secrets/test-secret.sops.yaml"
+mkdir -p "$REPO_ROOT/workloads/smoke/secrets"
+plain="$REPO_ROOT/workloads/smoke/secrets/test-secret.yaml"
+encrypted="$REPO_ROOT/workloads/smoke/secrets/test-secret.sops.yaml"
 cat > "$plain" <<'EOF'
 apiVersion: v1
 kind: Secret

@@ -1,0 +1,53 @@
+# The repository's one required check (ADR-0016, #124). CI is a validator
+# only: it runs the same pre-commit config a contributor runs locally, plus
+# the hardware-free self-checks (scripts/check). It never deploys — Flux
+# pulls from inside the network (ADR-0007, ADR-0008, ADR-0011), so no
+# cluster credential is ever a CI secret.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # python3.14: matches the ansible-lint pre-commit hook's own
+      # language_version pin (github.com/ansible/ansible-lint's
+      # .pre-commit-hooks.yaml), so pre-commit doesn't go looking for an
+      # interpreter the runner doesn't have.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      # Caches the installed hook environments (ansible-core, shellcheck,
+      # gitleaks' golang toolchain) and the Galaxy collections below, the
+      # expensive part; keyed on the configs so a bump invalidates them.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/pre-commit
+            ~/.ansible/collections
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml', 'ansible/requirements.yml') }}
+
+      - run: pip install pre-commit ansible-core
+      # ansible-lint's own pre-commit hook runs in an isolated venv with
+      # only ansible-core (its .pre-commit-hooks.yaml pins that, not the
+      # collections the roles actually use). Installing to the default
+      # ~/.ansible/collections works around it: that path is always in
+      # ansible-lint's search list regardless of which venv runs it.
+      - run: ansible-galaxy collection install -r ansible/requirements.yml
+      - run: pre-commit run --all-files
+      - run: scripts/check

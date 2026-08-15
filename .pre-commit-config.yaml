@@ -1,14 +1,20 @@
-# Pre-commit scanning (ADR-0009, #73): two independent layers ahead of
-# GitHub's push protection.
+# Pre-commit scanning (ADR-0009 and its ADR-0016 amendment): the same
+# config a local hook and CI both run, so the two can never diverge.
 #
 # 1. sops-metadata-policy, local (scripts/check-sops-secrets). Enforces this
 #    repo's own path convention (secrets/.*\.ya?ml$, from .sops.yaml): any
 #    such file must be SOPS-encrypted.
-# 2. gitleaks, pattern-matches likely secret material anywhere in the diff,
-#    the backstop for values pasted somewhere the path convention doesn't
-#    cover.
+# 2. gitleaks, pattern-matches likely secret material anywhere in the
+#    working tree (entry overridden below), the backstop for values pasted
+#    somewhere the path convention doesn't cover. False positives (a
+#    documented example key, never a real secret) go in .gitleaksignore.
+# 3. shellcheck, scripts/*'s seven top-level scripts (not scripts/lib/,
+#    a sourced-only library, never invoked directly).
+# 4. ansible-lint, ansible/ only (.ansible-lint excludes the Flux-generated
+#    clusters/ and the mixed-provenance workloads/).
 #
-# Install once per checkout: pip install pre-commit && pre-commit install
+# Install once per checkout:
+#   python3 -m venv .venv && .venv/bin/pip install pre-commit && .venv/bin/pre-commit install
 repos:
   - repo: local
     hooks:
@@ -25,3 +31,23 @@ repos:
     rev: v8.30.1
     hooks:
       - id: gitleaks
+        # Upstream's default entry scans `git ... --staged`: correct for a
+        # local commit hook, but empty (and so vacuously green) against a
+        # plain CI checkout, which has nothing staged. --no-git scans the
+        # working tree directly instead, so local and CI see the same thing.
+        entry: gitleaks detect --no-git --redact --no-banner
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        # -x follows the `source=` directive scripts/sops-age-setup uses for
+        # scripts/lib/wizard.sh; -P SCRIPTDIR resolves it relative to the
+        # file being checked, not the CWD pre-commit/CI happens to run from.
+        args: [-x, -P, SCRIPTDIR]
+        files: ^scripts/[^/]+$
+
+  - repo: https://github.com/ansible/ansible-lint
+    rev: v26.8.0
+    hooks:
+      - id: ansible-lint
