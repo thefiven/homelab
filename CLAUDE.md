@@ -38,3 +38,7 @@ The canonical vocabulary is kept as-is — `needs-triage`, `needs-info`,
 
 Single-context: `CONTEXT.md` at the root, ADRs under `docs/adr/`.
 See `docs/agents/domain.md`.
+
+After `/wizard` regenerates a wizard script, replace its inlined library
+section with `source "$(dirname "${BASH_SOURCE[0]}")/lib/wizard.sh"` before
+committing.
