@@ -21,6 +21,7 @@
       it (see defaults/main.yml); read the serial off the real disk with
       `udevadm info` and set it in inventory or host_vars before running
       against a real host.
+  tags: always
 
 - name: Install the ZFS userland
   ansible.builtin.apt:
@@ -347,3 +348,30 @@
     name: "zfs-trim-weekly@{{ zfs_state_pool }}.timer"
     enabled: true
     state: started
+
+# `--tags verify`: proves the "ZFS pools ONLINE" invariant
+# (docs/reference/platform-state.md) with the same tool this role already
+# trusts to read pool state, not the bash-over-SSH duplicate in
+# scripts/check-platform (still there until the companion `gitops` ticket
+# retires it). Read-only, so it doesn't depend on the import/create logic
+# above and can run against a pool this role never had to create or import
+# this pass.
+- name: Read ZFS pool health
+  ansible.builtin.command:
+    cmd: zpool list -H -o name,health
+  register: zfs_pool_health
+  changed_when: false
+  check_mode: false
+  tags: verify
+
+- name: Assert every ZFS pool is ONLINE
+  ansible.builtin.assert:
+    that: >-
+      zfs_pool_health.stdout_lines
+      | map('regex_replace', '^.*\t', '')
+      | reject('equalto', 'ONLINE')
+      | list == []
+    fail_msg: >-
+      Not every ZFS pool is ONLINE: {{ zfs_pool_health.stdout }}
+    quiet: true
+  tags: verify

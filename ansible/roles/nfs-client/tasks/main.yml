@@ -13,6 +13,7 @@
       nfs_client_nas_host and nfs_client_nas_export_base are not set. This
       role never ships a default for either (see defaults/main.yml); set
       them in inventory or host_vars before running against a real host.
+  tags: always
 
 - name: Install the NFS client packages
   ansible.builtin.apt:
@@ -54,6 +55,7 @@
       [ "$content" = "nfs-client role check" ]
   loop: "{{ nfs_client_mounts }}"
   changed_when: false
+  tags: verify
 
 # The root check above only proves the mount works — it doesn't prove
 # Immich's own (non-root) process can write to it. A Synology export
@@ -77,3 +79,4 @@
         bash -c 'read -r got < "$f"; [ "$got" = "$content" ]'
   loop: "{{ nfs_client_mounts }}"
   changed_when: false
+  tags: verify

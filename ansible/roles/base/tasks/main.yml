@@ -14,6 +14,7 @@
       base_admin_authorized_key is not set. This role never ships a default
       for it (see defaults/main.yml); set it in inventory or host_vars
       before running against a real host.
+  tags: always
 
 # `safe` (apt-get upgrade), not `dist` (apt-get full-upgrade): it applies
 # every pending update, security included, without ever removing a package
@@ -166,3 +167,22 @@
     regexp: "^#?GRUB_RECORDFAIL_TIMEOUT="
     line: "GRUB_RECORDFAIL_TIMEOUT={{ base_grub_recordfail_timeout }}"
   notify: Update grub
+
+# `--tags verify`: proves the "no pending reboot" invariant
+# (docs/reference/platform-state.md), replacing scripts/check-platform's
+# bash-over-SSH `[ ! -f /var/run/reboot-required ]` (still there until the
+# companion `gitops` ticket retires it). Lands in `base`, not any of the
+# other roles this ticket touches: a pending reboot is baseline node state,
+# not something any single role establishes.
+- name: Check whether a reboot is pending
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: base_reboot_required
+  tags: verify
+
+- name: Assert no reboot is pending
+  ansible.builtin.assert:
+    that: not base_reboot_required.stat.exists
+    fail_msg: "A reboot is pending: /var/run/reboot-required exists."
+    quiet: true
+  tags: verify

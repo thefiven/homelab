@@ -29,6 +29,7 @@
       k3s_role is not set to 'server' or 'agent'. This role never ships a
       default for it (see defaults/main.yml); set it in inventory or
       host_vars before running against a real host.
+  tags: always
 
 - name: Configure this node as a k3s server
   when: k3s_role == 'server'
@@ -111,3 +112,42 @@
       # Same "No change detected" gate as the server task above.
       changed_when: "'No change detected' not in k3s_agent_install.stdout"
       no_log: true
+
+# `--tags verify`: proves the "k3s node Ready" invariant
+# (docs/reference/platform-state.md) with the cluster's own kubectl instead
+# of scripts/check-platform's bash-over-SSH `awk` column check. `-o
+# jsonpath` replaces that awk entirely: it reads the Ready condition k3s
+# already reports structurally, rather than a fixed column position in
+# `--no-headers` text. `argv`, not a shell string: the jsonpath template's
+# own embedded quotes (`{"\t"}`, `=="Ready"`) don't survive the `command`
+# module's default shlex-splitting of a plain `cmd:` string. Runs only
+# where a local kubeconfig exists to read the cluster from, a server in
+# this platform's current single-node topology (agent mode isn't
+# exercised yet, see this role's header note).
+- name: Read every k3s node's Ready condition
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - nodes
+      - -o
+      - jsonpath={range .items[*]}{.metadata.name}{"\t"}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}
+  register: k3s_node_ready
+  changed_when: false
+  check_mode: false
+  when: k3s_role == 'server'
+  tags: verify
+
+- name: Assert every k3s node is Ready
+  ansible.builtin.assert:
+    that: >-
+      k3s_node_ready.stdout_lines
+      | map('regex_replace', '^.*\t', '')
+      | reject('equalto', 'True')
+      | list == []
+    fail_msg: >-
+      Not every k3s node is Ready: {{ k3s_node_ready.stdout }}
+    quiet: true
+  when: k3s_role == 'server'
+  tags: verify
