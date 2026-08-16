@@ -46,6 +46,56 @@
       register: k3s_server_install
       changed_when: "'No change detected' not in k3s_server_install.stdout"
 
+    # Generic node label (#131, ADR-0015): PersistentVolume nodeAffinity
+    # rules can reference k3s_node_label_key (defaults/main.yml) instead of
+    # the real OS hostname k3s otherwise registers the node under.
+    # inventory_hostname is already the generic Ansible alias (node1,
+    # node2, ...), never the real hostname (ADR-0015 decision 1), so that's
+    # the value written. ansible_facts.hostname (the real OS hostname) is
+    # only used transiently below to address the node's own object in the
+    # k3s API; it never lands in a label, a tracked file, or anywhere else.
+    # (ansible_hostname, the older top-level alias for the same fact, is
+    # deprecated as of ansible-core 2.20 in favour of ansible_facts.*.)
+    #
+    # `until`/`retries` because this runs on every apply, not just once:
+    # right after install the API server may not have registered the local
+    # node yet, unlike the join-token read in agent mode which waits on an
+    # already-running server. Reads the node back as JSON rather than a
+    # kubectl jsonpath expression: the label key contains `.` and `/`,
+    # which jsonpath needs its own escaping for, but `from_json` needs
+    # none, matching how the node lookup below leans on Ansible's own
+    # Jinja filters over another kubectl output format.
+    - name: Read this node's current labels
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - get
+          - node
+          - "{{ ansible_facts.hostname }}"
+          - -o
+          - json
+      register: k3s_node_json
+      until: k3s_node_json.rc == 0
+      retries: 10
+      delay: 3
+      changed_when: false
+      check_mode: false
+
+    - name: Label this node with its generic alias
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - label
+          - node
+          - "{{ ansible_facts.hostname }}"
+          - "{{ k3s_node_label_key }}={{ inventory_hostname }}"
+          - --overwrite
+      changed_when: >-
+        (k3s_node_json.stdout | from_json).metadata.labels[k3s_node_label_key]
+        | default('') != inventory_hostname
+
 - name: Configure this node as a k3s agent
   when: k3s_role == 'agent'
   block:
