@@ -1,0 +1,122 @@
+# immich-machine-learning (#136): the GPU-accelerated inference service Immich's
+# job workers call over HTTP for face detection, smart search (CLIP) embeddings,
+# and OCR. #135's server-deployment.yaml left ML entirely unconfigured because
+# this service didn't exist yet; this Deployment is that missing half.
+#
+# No DB_* or REDIS_* environment variables, unlike server-deployment.yaml and
+# server-worker-deployment.yaml: verified against upstream's own source
+# (immich-app/immich, machine-learning/immich_ml/config.py, main branch,
+# checked 2026-08-16) that this container reads only MACHINE_LEARNING_* and a
+# handful of IMMICH_HOST/PORT/LOG_LEVEL variables: no Postgres or Redis
+# client exists in this process at all. Bull's job queue lives entirely in
+# immich-server/immich-server-worker; this service is a stateless HTTP
+# inference API on port 3003 that those pods call per job, never a queue
+# consumer itself. Wiring immich-server to it happens through Administration
+# > Settings > Machine Learning Settings > URL in Postgres (the same
+# System-Settings mechanism server-deployment.yaml already uses for job
+# concurrency), not an env var: IMMICH_MACHINE_LEARNING_URL exists but #16's
+# research explicitly flags it as undocumented on docs.immich.app's own
+# environment-variables page ("they work, but ... do not build on them").
+#
+# GPU: `nvidia.com/gpu: 1` in both requests and limits, no runtimeClassName
+# field: node1's containerd already defaults to the nvidia runtime
+# node-wide (`--default-runtime=nvidia`, ansible/roles/k3s, #105), and #105's
+# device plugin is what advertises the resource at all. Image tag carries the
+# `-cuda` suffix (immich-app/immich's own docker-compose.yml documents the
+# per-backend suffix convention); CUDA is upstream's own most-reliable
+# backend recommendation among the five it supports (#16 research, section
+# 6.1). Digest resolved from ghcr.io/immich-app/immich-machine-learning:
+# v3.1.0-cuda (same release as server-deployment.yaml/redis, 2026-08-16) via
+# the GHCR registry API, manifest-list digest, same convention as every other
+# image pin in this directory.
+#
+# Memory: 2 GiB request and limit both, ADR-0002's Immich table
+# (`machine-learning` row), reserved even though the workload is bursty and
+# sheds memory when idle, per that ADR's own reasoning: budgeting to the idle
+# floor would let a face-detection job arriving after idle meet a full
+# machine. No CPU request or limit, same rationale as every other manifest
+# here (ADR-0002 rejects per-service CPU quotas outright). VRAM itself is not
+# a schedulable Kubernetes resource and is not budgeted here; #16's research
+# names the 3070 Ti's 8 GiB shared with any other GPU consumer as the actual
+# open risk, and ADR-0002 answers it by giving local inference zero, so this
+# card is now Immich's alone.
+#
+# Model cache (/cache, MACHINE_LEARNING_CACHE_FOLDER's baked-in image
+# default per machine-learning/Dockerfile's own ENV, not overridden here):
+# a plain hostPath, DirectoryOrCreate, not a ZFS-backed local PV like
+# postgres-pv.yaml/redis-pv.yaml/derivatives-pv.yaml. ADR-0010's own table
+# places the model cache on the **system pool** ("Read-mostly, cold-start
+# only, redownloadable from Hugging Face"), not the state pool, and the
+# `zfs` role's own defaults file is explicit that it "only ever touches the
+# state pool", the system pool being the installer's autoinstall root ZFS
+# that already exists with no per-workload dataset step. DirectoryOrCreate
+# (not the fail-fast `type: Directory` server-deployment.yaml uses for its
+# NAS mounts) is correct here for the same reason: there is no separate
+# device or mount to silently paper over, only a plain directory on the root
+# filesystem, and losing its contents costs a redownload, not data.
+#
+# nodeSelector is required (not inherited from a PV's nodeAffinity, unlike
+# postgres/redis/derivatives): the hostPath model-cache volume carries none
+# of its own, and node1 is also the only node #105's device plugin runs
+# against. Same label as every other node-pinned manifest here (ADR-0015,
+# #131).
+#
+# Healthcheck: `python3 healthcheck.py`, the exact command this image's own
+# Dockerfile HEALTHCHECK runs (machine-learning/Dockerfile), reused as-is,
+# same pattern as server-deployment.yaml's immich-healthcheck and
+# redis-statefulset.yaml's redis-cli ping.
+#
+# ADR-0011: no Ingress, no NodePort. Immich stays private-only, and unlike
+# server-service.yaml this Service is never reached from outside the
+# cluster at all, only from immich-server/immich-server-worker pods over
+# ClusterIP.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: immich-machine-learning
+  namespace: immich
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: immich-machine-learning
+  template:
+    metadata:
+      labels:
+        app: immich-machine-learning
+    spec:
+      nodeSelector:
+        homelab.local/node: node1
+      containers:
+        - name: machine-learning
+          image: ghcr.io/immich-app/immich-machine-learning:v3.1.0-cuda@sha256:82d3f6a093455964508052e0b3bc55a91075b48b65be35e78b40774a72c1ebb3
+          ports:
+            - name: http
+              containerPort: 3003
+          readinessProbe:
+            exec:
+              command: [python3, healthcheck.py]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 10
+          livenessProbe:
+            exec:
+              command: [python3, healthcheck.py]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 10
+          volumeMounts:
+            - name: model-cache
+              mountPath: /cache
+          resources:
+            requests:
+              memory: 2Gi
+              nvidia.com/gpu: 1
+            limits:
+              memory: 2Gi
+              nvidia.com/gpu: 1
+      volumes:
+        - name: model-cache
+          hostPath:
+            path: /var/lib/immich/ml-cache
+            type: DirectoryOrCreate
