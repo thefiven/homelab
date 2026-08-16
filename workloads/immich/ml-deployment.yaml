@@ -84,12 +84,24 @@
 # server-service.yaml this Service is never reached from outside the
 # cluster at all, only from immich-server/immich-server-worker pods over
 # ClusterIP.
+#
+# strategy: Recreate, not the RollingUpdate default. Observed live (#136):
+# the default surges a second pod before deleting the first, and this node
+# has exactly one `nvidia.com/gpu` unit to hand out: the surge pod stuck
+# `Pending` on "Insufficient nvidia.com/gpu" forever, since the old pod
+# never released it. Recreate deletes the old pod first, freeing the GPU
+# before the new one is even created. The unavailability window this
+# trades in is a non-issue here: nothing calls this Service synchronously
+# in the request path (server workers retry a failed inference call against
+# the job queue, they don't block a user-facing request on it).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: immich-machine-learning
   namespace: immich
 spec:
+  strategy:
+    type: Recreate
   replicas: 1
   selector:
     matchLabels:
