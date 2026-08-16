@@ -23,7 +23,6 @@ resources:
   - derivatives-pv.yaml
   - derivatives-pvc.yaml
   - server-deployment.yaml
-  - server-worker-deployment.yaml
   - server-service.yaml
   - ml-deployment.yaml
   - ml-service.yaml
