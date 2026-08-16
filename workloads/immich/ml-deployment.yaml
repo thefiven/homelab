@@ -30,13 +30,27 @@
 # the GHCR registry API, manifest-list digest, same convention as every other
 # image pin in this directory.
 #
-# Memory: 2 GiB request and limit both, ADR-0002's Immich table
-# (`machine-learning` row), reserved even though the workload is bursty and
-# sheds memory when idle, per that ADR's own reasoning: budgeting to the idle
-# floor would let a face-detection job arriving after idle meet a full
-# machine. No CPU request or limit, same rationale as every other manifest
-# here (ADR-0002 rejects per-service CPU quotas outright). VRAM itself is not
-# a schedulable Kubernetes resource and is not budgeted here; #16's research
+# Memory: 6 GiB request and limit, TEMPORARY, same pattern as
+# server-worker-deployment.yaml's own widened envelope for #135's initial
+# import: not a revision of ADR-0002's 2 GiB `machine-learning` steady-state
+# figure. Observed live on first real deployment (#136): a real bulk import
+# had already queued OCR, SmartSearch and AssetDetectFaces jobs before this
+# pod finished its first image pull, so all three job types hit it within
+# seconds of startup, each triggering its own model download-and-load
+# (buffalo_l detection+recognition, PP-OCRv5_mobile, ViT-B-32__openai)
+# concurrently in the one MACHINE_LEARNING_WORKERS=1 process. OOMKilled
+# (exit 137) three times in a row at 2Gi before this widening. This is
+# ADR-0002's own "sequenced, not budgeted" initial-import exception, just
+# triggered by cold-start model loading instead of asset volume: once every
+# model this corpus needs is on disk in the model-cache volume and warm in
+# the process, steady-state serving is far below 2Gi (#16 names ~1004 MiB for
+# the default CLIP model alone, the largest of the three). Revert to 2Gi
+# request/limit once `kubectl get pods -n immich -l
+# app=immich-machine-learning` shows no more restarts and the admin Job
+# Queues page is idle, the same signal server-worker-deployment.yaml names.
+# No CPU request or limit, same rationale as every other manifest here
+# (ADR-0002 rejects per-service CPU quotas outright). VRAM itself is not a
+# schedulable Kubernetes resource and is not budgeted here; #16's research
 # names the 3070 Ti's 8 GiB shared with any other GPU consumer as the actual
 # open risk, and ADR-0002 answers it by giving local inference zero, so this
 # card is now Immich's alone.
@@ -110,10 +124,10 @@ spec:
               mountPath: /cache
           resources:
             requests:
-              memory: 2Gi
+              memory: 6Gi
               nvidia.com/gpu: 1
             limits:
-              memory: 2Gi
+              memory: 6Gi
               nvidia.com/gpu: 1
       volumes:
         - name: model-cache
