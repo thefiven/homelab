@@ -1,0 +1,85 @@
+# Redis cache + job-queue backend for Immich (#134). StatefulSet for the
+# same reason as postgres-statefulset.yaml: stable identity, and
+# redis-service.yaml's headless Service gives it stable DNS.
+#
+# Image matches the `redis` service in immich-app/immich's own
+# docker/docker-compose.yml (main branch, verified 2026-08-16): Immich pins
+# docker.io/valkey/valkey:9, not a redis-branded image. Its healthcheck
+# (`redis-cli ping`) is reused as-is below, proof that binary exists on this
+# exact image, not an assumption ported from a different one.
+#
+# No AUTH: docs.immich.app's environment-variable reference documents
+# REDIS_PASSWORD/REDIS_USERNAME as optional with no default, and upstream's
+# compose sets neither on the redis service nor on immich-server/
+# immich-machine-learning. #132's SOPS secret only covers Postgres
+# credentials for the same reason: nothing here needs one.
+#
+# Persistence: upstream's own compose runs this image with no volume and no
+# --save override, i.e. no persistence at all: Immich treats Redis as
+# disposable. This ticket's acceptance criteria require a bound PVC anyway
+# (job-queue state surviving a pod restart is worth more here than upstream's
+# default), so `--dir /data` + one --save rule turn RDB snapshotting on
+# against the mounted volume.
+# ponytail: single save rule (60s / >=1 key changed), not upstream's tiered
+# schedule; tighten if job-queue durability needs a sub-minute RPO.
+#
+# Memory: 0.5 GiB request and limit both, ADR-0002's Immich table (Redis
+# row). No CPU request or limit, same rationale as postgres-statefulset.yaml
+# (ADR-0002 rejects per-service CPU quotas outright).
+#
+# No nodeAffinity/nodeSelector here: redis-pv.yaml's static `local` PV
+# already carries the required nodeAffinity (ADR-0014, ADR-0015), which is
+# what the scheduler uses to place this pod on node1.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: immich-redis
+  namespace: immich
+spec:
+  serviceName: immich-redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app: immich-redis
+  template:
+    metadata:
+      labels:
+        app: immich-redis
+    spec:
+      containers:
+        - name: redis
+          image: docker.io/valkey/valkey:9@sha256:3acc0687f2a2e1091fae6450d7842dd658c941338cf0a873ddd9e14b9e4ea4dd
+          # `args`, not `command`: this image's ENTRYPOINT
+          # (docker-entrypoint.sh, valkey-io/valkey-container) is what drops
+          # from root to the unprivileged `valkey` UID 999 and chowns /data
+          # before exec'ing valkey-server; `command` would replace that
+          # entrypoint outright and leave the process running as root for
+          # its whole lifetime. `args` overrides CMD only, so the entrypoint
+          # stays in the path, same as upstream's own compose deployment of
+          # this exact image.
+          args: [--save, "60", "1", --dir, /data]
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: [redis-cli, ping]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: [redis-cli, ping]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              memory: 0.5Gi
+            limits:
+              memory: 0.5Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: immich-redis
