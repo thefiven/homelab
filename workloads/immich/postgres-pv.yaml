@@ -1,0 +1,41 @@
+# Static `local` PersistentVolume, no CSI driver, no dynamic provisioning
+# (ADR-0014): k3s's bundled local-path-provisioner is disabled at install
+# (ansible/roles/k3s/defaults/main.yml), so nothing else could bind this
+# claim by accident.
+#
+# Backed by the immich-db ZFS dataset the `zfs` role creates
+# (ansible/roles/zfs/defaults/main.yml: recordsize=32K, copies=2, the
+# state pool's one dataset ADR-0010 names irreplaceable). ZFS's own default
+# mountpoint for a pool named "state" is /state, with no override anywhere
+# in that role, so the dataset mounts at /state/immich-db.
+#
+# nodeAffinity is required (not a pod-level nodeSelector): this is what the
+# scheduler actually uses to place the StatefulSet's pod on the one node
+# that has this path. The label value is the generic Ansible alias k3s's
+# own role applies (ADR-0015, #131), never the real OS hostname.
+#
+# Capacity is declarative only, local volumes enforce nothing; 20Gi is
+# the top of ADR-0002's own 3-20 GB estimate for Postgres + VectorChord.
+# Reclaim policy is Retain: this PV backs the one slice ADR-0010 calls
+# irreplaceable, so nothing here ever auto-deletes the underlying dataset.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: immich-postgres
+spec:
+  capacity:
+    storage: 20Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  local:
+    path: /state/immich-db
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: homelab.local/node
+              operator: In
+              values:
+                - node1

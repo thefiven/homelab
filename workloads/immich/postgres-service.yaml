@@ -1,0 +1,19 @@
+# Headless Service pairing the StatefulSet below (its `serviceName` field
+# requires a governing Service to exist). Headless (clusterIP: None) gives
+# a stable DNS name at the service level, immich-postgres.immich.svc.cluster.local
+# (the AC's "stable DNS name (immich-postgres.default.svc.cluster.local or
+# equivalent)"), and per-pod at immich-postgres-0.immich-postgres.immich.svc.cluster.local;
+# either resolves for immich-server and immich-machine-learning.
+apiVersion: v1
+kind: Service
+metadata:
+  name: immich-postgres
+  namespace: immich
+spec:
+  clusterIP: None
+  selector:
+    app: immich-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
