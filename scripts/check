@@ -7,3 +7,9 @@ DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 "$DIR/provision-state-pool" --self-check
 "$DIR/build-media" --self-check
 "$DIR/check-sops-secrets-test"
+
+# Kustomization under workloads/immich parses and builds cleanly (#130),
+# same check kustomize-controller runs against it every reconcile, without
+# needing a live cluster. SOPS ciphertext still parses as valid YAML, so
+# this doesn't need a decryption key.
+kubectl kustomize "$DIR/../workloads/immich" >/dev/null
