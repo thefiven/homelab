@@ -44,3 +44,9 @@ k3s_server_exec_args: --disable=local-storage --default-runtime=nvidia
 # Agent mode only: port the server's API listens on. k3s's own default,
 # not something this platform has ever needed to change.
 k3s_server_port: 6443
+
+# Server mode only: the node label key PersistentVolume nodeAffinity rules
+# reference instead of the real OS hostname k3s registers the node under
+# (#131, ADR-0015). Its value is always inventory_hostname, the generic
+# Ansible alias (node1, node2, ...).
+k3s_node_label_key: homelab.local/node
