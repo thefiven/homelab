@@ -1,0 +1,19 @@
+# ClusterIP (the unset default), not NodePort like server-service.yaml: this
+# Service is only ever called by immich-server/immich-server-worker pods
+# inside the cluster, once Administration > Settings > Machine Learning
+# Settings > URL is pointed at it (see ml-deployment.yaml's comment on why
+# that's a runtime System Setting, not an env var). ADR-0011's private-only
+# rule for Immich is unaffected either way, since nothing here ever reaches
+# a Cloudflare tunnel or an Ingress.
+apiVersion: v1
+kind: Service
+metadata:
+  name: immich-machine-learning
+  namespace: immich
+spec:
+  selector:
+    app: immich-machine-learning
+  ports:
+    - name: http
+      port: 3003
+      targetPort: http
