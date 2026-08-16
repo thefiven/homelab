@@ -91,16 +91,29 @@ spec:
           # reused as-is, not a guessed HTTP path, same pattern as
           # postgres-statefulset.yaml's pg_isready and redis-statefulset.yaml's
           # redis-cli ping.
+          #
+          # timeoutSeconds: 10, not kubelet's 1s default. Observed live during
+          # the first real import (#135): the batch job queue saturates this
+          # node's CPU (ADR-0002 names exactly this contention, "it gets slow"
+          # rather than "it does not work" for everything except Immich's own
+          # queues) and the 1s default made the liveness probe kill and
+          # restart the pod mid-import. The healthcheck itself still succeeds,
+          # it just doesn't always get scheduled inside 1s on a busy single
+          # core.
+          # ponytail: one flat timeout, not a load-aware backoff; revisit if
+          # 10s ever proves too tight again under a bigger batch.
           readinessProbe:
             exec:
               command: [immich-healthcheck]
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 10
           livenessProbe:
             exec:
               command: [immich-healthcheck]
             initialDelaySeconds: 30
             periodSeconds: 10
+            timeoutSeconds: 10
           volumeMounts:
             # Derivatives (thumbs/, encoded-video/, profile/, backups/) sit at
             # the root of the ZFS-backed PVC, mounted at the same internal
