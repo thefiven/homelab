@@ -30,6 +30,18 @@
 # nonexistent immich-machine-learning service until a future ticket deploys
 # it — expected, not a bug in this manifest.
 #
+# IMMICH_WORKERS_INCLUDE: api — TEMPORARY, paired with
+# server-worker-deployment.yaml. A large video import OOM-killed this pod
+# repeatedly at 3Gi (observed live, #135): job processing (thumbnails, video
+# transcoding) and API serving used to share this one container's cap.
+# docs.immich.app/administration/jobs-workers documents exactly two worker
+# roles, `api` and `microservices`; restricting this pod to `api` guarantees
+# it never picks up a job from the Bull queue again, so its existing 3Gi cap
+# stays intact and unraced. All job processing moves to the sibling worker
+# pod's own, larger envelope instead. Revert together with
+# server-worker-deployment.yaml once the import backlog is drained — without
+# this var unset again, nothing processes jobs at all once that pod is gone.
+#
 # nodeSelector is required here, unlike postgres-statefulset.yaml/
 # redis-statefulset.yaml: those get their node placement for free from their
 # PV's nodeAffinity, but this Deployment's hostPath volumes below (upload/,
@@ -62,6 +74,8 @@ spec:
             - name: http
               containerPort: 2283
           env:
+            - name: IMMICH_WORKERS_INCLUDE
+              value: api
             # DNS names, not IPs: postgres-service.yaml/redis-service.yaml's
             # headless Services resolve these within the immich namespace.
             - name: DB_HOSTNAME

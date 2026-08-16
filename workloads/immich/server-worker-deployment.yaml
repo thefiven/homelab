@@ -1,0 +1,114 @@
+# TEMPORARY. Added #135 to absorb one real initial-import OOM (a video
+# transcode job repeatedly killed immich-server-deployment.yaml's 3Gi
+# `server` container). Paired with that file's own
+# `IMMICH_WORKERS_INCLUDE: api`: this Deployment runs `IMMICH_WORKERS_EXCLUDE:
+# api`, i.e. every worker except `api` (docs.immich.app/administration/
+# jobs-workers names exactly these two roles) — thumbnail generation, video
+# transcoding, metadata extraction, and everything else the Bull job queue
+# hands out. Splitting the roles onto separate pods, rather than just raising
+# the shared container's cap, means the always-on API pod's budget stays at
+# ADR-0002's steady-state 3Gi number instead of that figure being revised
+# upward for a one-off event — the same "sequenced, not budgeted" treatment
+# ADR-0002 already gives the initial NAS import of originals.
+#
+# Delete this file (and revert IMMICH_WORKERS_INCLUDE on
+# server-deployment.yaml) once the import backlog drains — `kubectl get
+# pods -n immich -l app=immich-server-worker` idle and the admin Job Queues
+# page empty is the signal. Until reverted, immich-server-deployment.yaml's
+# pod cannot process jobs on its own; this Deployment existing is what makes
+# that safe.
+#
+# 6Gi request/limit: generous on purpose, not a new steady-state budget line.
+# The node measured ~7% CPU / 10% memory used with only Immich+Postgres+Redis
+# running (#135), so this temporary envelope has nowhere near enough
+# neighbours to starve. No CPU request/limit, same ADR-0002 rationale as
+# every other manifest here.
+#
+# Same volumes, same nodeSelector, same image and healthcheck as
+# server-deployment.yaml: job processing reads originals and writes
+# derivatives, so it needs identical access, on the same node (the
+# derivatives PVC is RWO, bindable by more than one pod only on the node
+# that already holds it; the hostPath mounts only exist on node1 at all).
+# No Service: nothing but Redis ever needs to reach this pod directly.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: immich-server-worker
+  namespace: immich
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: immich-server-worker
+  template:
+    metadata:
+      labels:
+        app: immich-server-worker
+    spec:
+      nodeSelector:
+        homelab.local/node: node1
+      containers:
+        - name: worker
+          image: ghcr.io/immich-app/immich-server:v3.1.0@sha256:b434cb9287eea1471c9974845914d4dd328c9c2d652e446ed4930f99944f0ceb
+          env:
+            - name: IMMICH_WORKERS_EXCLUDE
+              value: api
+            - name: DB_HOSTNAME
+              value: immich-postgres
+            - name: REDIS_HOSTNAME
+              value: immich-redis
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: immich-postgres
+                  key: DB_USERNAME
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: immich-postgres
+                  key: DB_PASSWORD
+            - name: DB_DATABASE_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: immich-postgres
+                  key: DB_DATABASE_NAME
+          # immich-healthcheck detects IMMICH_WORKERS_EXCLUDE=api itself
+          # (server/bin/immich-healthcheck: "API worker excluded, skipping",
+          # exit 0) rather than probing the API port, so the exact same probe
+          # as the api-only pod is correct here too, unmodified.
+          readinessProbe:
+            exec:
+              command: [immich-healthcheck]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 10
+          livenessProbe:
+            exec:
+              command: [immich-healthcheck]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 10
+          volumeMounts:
+            - name: derivatives
+              mountPath: /data
+            - name: upload
+              mountPath: /data/upload
+            - name: library
+              mountPath: /data/library
+          resources:
+            requests:
+              memory: 6Gi
+            limits:
+              memory: 6Gi
+      volumes:
+        - name: derivatives
+          persistentVolumeClaim:
+            claimName: immich-derivatives
+        - name: upload
+          hostPath:
+            path: /srv/immich/upload
+            type: Directory
+        - name: library
+          hostPath:
+            path: /srv/immich/library
+            type: Directory
