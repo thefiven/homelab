@@ -1,0 +1,143 @@
+# immich-server (#135): the API server and its background job workers are
+# the same process in upstream's own image (immich-app/immich's
+# docker/docker-compose.yml, main branch, verified 2026-08-16, runs exactly
+# one `immich-server` container — no separate worker image exists upstream).
+# One container is therefore the whole Deployment, not a simplification.
+#
+# Deployment, not StatefulSet: unlike Postgres and Redis, nothing here needs
+# stable storage identity of its own — every volume below is either a PVC
+# bound by name (derivatives-pvc.yaml) or a hostPath, neither of which a
+# StatefulSet's per-replica PVC template would add anything to at replicas: 1.
+#
+# Image digest resolved from ghcr.io/immich-app/immich-server:v3.1.0 (latest
+# release, 2026-08-16) via the GHCR registry API, same as postgres/redis pin
+# to a manifest-list digest rather than a floating tag.
+#
+# Memory: 3 GiB request and limit both, ADR-0002's Immich table
+# (`immich-server` + jobs row). No CPU request or limit, same rationale as
+# postgres-statefulset.yaml (ADR-0002 rejects per-service CPU quotas
+# outright).
+#
+# Job concurrency is left at Immich's own defaults (System Settings > Jobs,
+# stored in Postgres, not an env var upstream sets) rather than lowered:
+# ADR-0002 names this Immich's own job-concurrency setting as the intended
+# lever for its "hard ceiling on Immich's batch queues", and nothing here
+# overrides it.
+#
+# Machine learning (IMMICH_MACHINE_LEARNING_ENABLED, _URL) is left at
+# upstream's defaults, unset here: #135 scopes ML out entirely ("GPU: none
+# for server (ML only)"), so ML-dependent jobs simply fail against a
+# nonexistent immich-machine-learning service until a future ticket deploys
+# it — expected, not a bug in this manifest.
+#
+# nodeSelector is required here, unlike postgres-statefulset.yaml/
+# redis-statefulset.yaml: those get their node placement for free from their
+# PV's nodeAffinity, but this Deployment's hostPath volumes below (upload/,
+# library/) carry no such binding on their own — a plain Kubernetes hostPath
+# volume, unlike a `local` PersistentVolume, has no nodeAffinity field, so
+# without an explicit selector the scheduler could place this pod on a node
+# where /srv/immich doesn't exist. Same label as every other node-pinned
+# manifest here (ADR-0015, #131).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: immich-server
+  namespace: immich
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: immich-server
+  template:
+    metadata:
+      labels:
+        app: immich-server
+    spec:
+      nodeSelector:
+        homelab.local/node: node1
+      containers:
+        - name: server
+          image: ghcr.io/immich-app/immich-server:v3.1.0@sha256:b434cb9287eea1471c9974845914d4dd328c9c2d652e446ed4930f99944f0ceb
+          ports:
+            - name: http
+              containerPort: 2283
+          env:
+            # DNS names, not IPs: postgres-service.yaml/redis-service.yaml's
+            # headless Services resolve these within the immich namespace.
+            - name: DB_HOSTNAME
+              value: immich-postgres
+            - name: REDIS_HOSTNAME
+              value: immich-redis
+            # Same Secret #132 created for the Postgres container itself
+            # (secrets/immich-postgres.sops.yaml) — one set of DB credentials,
+            # shared by both consumers, not duplicated.
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: immich-postgres
+                  key: DB_USERNAME
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: immich-postgres
+                  key: DB_PASSWORD
+            - name: DB_DATABASE_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: immich-postgres
+                  key: DB_DATABASE_NAME
+          # `immich-healthcheck` is the same binary the upstream image's own
+          # `HEALTHCHECK CMD immich-healthcheck` runs (server/Dockerfile) —
+          # reused as-is, not a guessed HTTP path, same pattern as
+          # postgres-statefulset.yaml's pg_isready and redis-statefulset.yaml's
+          # redis-cli ping.
+          readinessProbe:
+            exec:
+              command: [immich-healthcheck]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: [immich-healthcheck]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          volumeMounts:
+            # Derivatives (thumbs/, encoded-video/, profile/, backups/) sit at
+            # the root of the ZFS-backed PVC, mounted at the same internal
+            # path (/data) Immich's own code always looks at (docs.immich.app:
+            # "This path is where the Immich code looks for the files, which
+            # is internal to the docker container"). upload/ and library/
+            # below mount over subpaths of that same /data tree, per
+            # ADR-0010's "moved some of these folders onto a different
+            # storage device" pattern — Kubernetes lets a more specific
+            # mountPath shadow a parent one.
+            - name: derivatives
+              mountPath: /data
+            - name: upload
+              mountPath: /data/upload
+            - name: library
+              mountPath: /data/library
+          resources:
+            requests:
+              memory: 3Gi
+            limits:
+              memory: 3Gi
+      volumes:
+        - name: derivatives
+          persistentVolumeClaim:
+            claimName: immich-derivatives
+        # hostPath, not a PVC: these are the nfs-client role's own mounts
+        # (ansible/roles/nfs-client, #135's "NAS mounts ... paths match
+        # nfs-client role defaults"), already NFS-backed on node1 by the time
+        # this pod schedules there. `type: Directory` fails the mount instead
+        # of silently creating an empty local directory if the NFS mount
+        # isn't actually up — the originals must come from the NAS (ADR-0010),
+        # never from a fresh empty folder on the node's own disk.
+        - name: upload
+          hostPath:
+            path: /srv/immich/upload
+            type: Directory
+        - name: library
+          hostPath:
+            path: /srv/immich/library
+            type: Directory

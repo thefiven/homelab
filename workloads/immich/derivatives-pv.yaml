@@ -1,0 +1,43 @@
+# Static `local` PersistentVolume, same mechanism as postgres-pv.yaml and
+# redis-pv.yaml (ADR-0014: no CSI driver, no dynamic provisioning; k3s's
+# bundled local-path-provisioner is disabled at install).
+#
+# Backed by the immich-derivatives ZFS dataset (ansible/roles/zfs/defaults/main.yml,
+# #135). ZFS's own default mountpoint for a pool named "state" is /state, with
+# no override in that role, so the dataset mounts at /state/immich-derivatives.
+# This is the ADR-0010 slice that stays local (thumbs/, encoded-video/,
+# profile/, backups/) while upload/ and library/ (the originals) are NFS
+# hostPath mounts declared straight on the immich-server Deployment, not a PV
+# (ADR-0010: "Immich originals stay on the NAS over NFS").
+#
+# nodeAffinity is required (not a pod-level nodeSelector): this is what the
+# scheduler uses to place the pod that claims this PV on the one node that has
+# this path. The label value is the generic Ansible alias k3s's own role
+# applies (ADR-0015, #131), never the real OS hostname.
+#
+# Capacity is declarative only, local volumes enforce nothing; 300Gi is the
+# top of ADR-0002's own 150-300 GB estimate for Immich derivatives. Reclaim
+# policy is Retain, same reasoning as redis-pv.yaml: no CSI/provisioner exists
+# here to act on Delete (ADR-0014), so Retain is the only reclaim policy this
+# mechanism actually honours.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: immich-derivatives
+spec:
+  capacity:
+    storage: 300Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  local:
+    path: /state/immich-derivatives
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: homelab.local/node
+              operator: In
+              values:
+                - node1
