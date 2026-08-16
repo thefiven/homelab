@@ -16,3 +16,7 @@ resources:
   - postgres-pvc.yaml
   - postgres-service.yaml
   - postgres-statefulset.yaml
+  - redis-pv.yaml
+  - redis-pvc.yaml
+  - redis-service.yaml
+  - redis-statefulset.yaml

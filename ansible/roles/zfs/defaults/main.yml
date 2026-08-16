@@ -55,3 +55,12 @@ zfs_state_datasets:
   - name: immich-derivatives
     properties:
       atime: "off"
+  # Immich's Redis (#134): cache + Bull job-queue backend, not the
+  # irreplaceable slice ADR-0010 reserves `copies=2` for, and not scanned by
+  # anything the way the photo library is, so no property override fits the
+  # "database and derivative datasets" atime=off rule (ADR-0010) either.
+  # Empty properties: inherits the pool root's atime=on/relatime=on and
+  # default recordsize (the task loop reads `item.properties` unconditionally,
+  # so the key must exist even when there's nothing to set).
+  - name: immich-redis
+    properties: {}

@@ -1,0 +1,16 @@
+# Binds by name to the static PV in redis-pv.yaml, same reasoning as
+# postgres-pvc.yaml: no StorageClass object exists (ADR-0014), so an unset
+# storageClassName here matches the PV's own unset storageClassName.
+# `volumeName` pins the match directly.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: immich-redis
+  namespace: immich
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  volumeName: immich-redis
