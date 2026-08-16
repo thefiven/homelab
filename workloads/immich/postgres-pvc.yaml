@@ -1,0 +1,19 @@
+# Binds by name to the static PV in postgres-pv.yaml (ADR-0014: no
+# StorageClass object exists, since k3s's local-storage provisioner, and
+# the default StorageClass it would otherwise register, is disabled at
+# install, so an unset storageClassName here matches the PV's own unset
+# storageClassName instead of waiting on a default that will never exist).
+# `volumeName` pins the match directly, removing any ambiguity from
+# capacity/access-mode matching alone.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: immich-postgres
+  namespace: immich
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  volumeName: immich-postgres

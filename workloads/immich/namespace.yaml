@@ -1,7 +1,8 @@
-# Flux's `workloads` Kustomization (clusters/homelab/workloads.yaml) applies
-# every manifest under workloads/ with no per-app kustomization.yaml gating
-# it, so the Secret in secrets/immich-postgres.sops.yaml needs its target
-# namespace to already exist in that same tree — otherwise apply fails with
+# kustomization.yaml (#133) lists every manifest in this directory as one
+# Kustomization, but ordering within a Kustomization's `resources` list
+# isn't a dependency graph: kustomize-controller can still apply the
+# Secret in secrets/immich-postgres.sops.yaml before this Namespace, so the
+# namespace has to exist regardless, or that apply fails with
 # "namespaces \"immich\" not found" on every reconcile.
 apiVersion: v1
 kind: Namespace

@@ -1,0 +1,91 @@
+# Postgres + VectorChord for Immich (#133). StatefulSet rather than
+# Deployment for the stable identity a database needs: the same PVC comes
+# back on every restart, and postgres-service.yaml's headless Service gives
+# it a stable DNS name.
+#
+# Image, env vars, POSTGRES_INITDB_ARGS and shm_size all mirror the
+# `database` service in immich-app/immich's own docker/docker-compose.yml
+# (main branch, verified 2026-08-16): the exact image Immich publishes for
+# this, not a guess. DB_USERNAME/DB_DATABASE_NAME/DB_PASSWORD come from the
+# SOPS secret #132 created (secrets/immich-postgres.sops.yaml).
+#
+# Memory: 2.5 GiB request and limit both, ADR-0002's Postgres + VectorChord
+# row. No CPU request or limit: ADR-0002 rejects per-service CPU quotas
+# outright ("There is no admission gate on CPU"; hard quotas "produce
+# predictable numbers by wasting" on a single node where memory, not CPU,
+# is the scarce resource).
+#
+# No nodeAffinity/nodeSelector here: postgres-pv.yaml's static `local` PV
+# already carries the required nodeAffinity (ADR-0014, ADR-0015), which is
+# what the scheduler uses to place this pod on node1.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: immich-postgres
+  namespace: immich
+spec:
+  serviceName: immich-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: immich-postgres
+  template:
+    metadata:
+      labels:
+        app: immich-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: immich-postgres
+                  key: DB_USERNAME
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: immich-postgres
+                  key: DB_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: immich-postgres
+                  key: DB_DATABASE_NAME
+            - name: POSTGRES_INITDB_ARGS
+              value: --data-checksums
+          readinessProbe:
+            exec:
+              command: [pg_isready, -U, $(POSTGRES_USER)]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: [pg_isready, -U, $(POSTGRES_USER)]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: dshm
+              mountPath: /dev/shm
+          resources:
+            requests:
+              memory: 2.5Gi
+            limits:
+              memory: 2.5Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: immich-postgres
+        # Matches upstream compose's shm_size: 128mb. Postgres uses
+        # /dev/shm for parallel-query and some VACUUM work; the container
+        # runtime's own default (64Mi) undercuts that.
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 128Mi
