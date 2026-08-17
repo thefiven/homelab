@@ -160,20 +160,34 @@ circuit does not cool. Not scheduled.
 
 ## 10. Every alert depends on two free third-party tiers, on one channel
 
-All five alert categories leave by a single route to a public ntfy.sh topic,
-and the dead-man witness that proves the chain is alive is a free
-Healthchecks.io account. There is no fallback channel: a second one was
-considered and refused, on the grounds that a duplicated alert is a less
-meaningful alert and one of the two ends up ignored. If ntfy stops being free
-or disappears, nothing reaches the phone; if Healthchecks does, the chain can
-die in silence again and the daily dump and monthly restore verification lose
-their detector with it. ntfy's public instance also publishes no figure for
-its daily message quota, only that a per-visitor limit exists, so the bound
-cannot be checked in advance.
+Four of the five alert categories leave by a single route to a public ntfy.sh
+topic; the fifth, node unreachable, cannot route through it at all, since the
+in-cluster Alertmanager meant to post it dies with the node it watches. That
+category's failure mode is instead caught by the dead-man witness, a free
+Healthchecks.io account, which is also what proves the whole chain is alive,
+at the cost of latency: the other four notify in seconds to minutes, while
+node-unreachable waits on the witness's own cadence, up to about an hour, the
+event that most needs a fast alert getting the slowest one this design has.
+There is no fallback channel: a second one was considered and refused, on the
+grounds that a duplicated alert is a less meaningful alert and one of the two
+ends up ignored. If ntfy stops being free or disappears, nothing reaches the
+phone; if Healthchecks does, the chain can die in silence again and the daily
+dump and monthly `restic check` lose their detector with it. ntfy's public
+instance also publishes no figure for its daily message quota, only that a
+per-visitor limit exists, so the bound cannot be checked in advance.
 
 Neither can be replaced by a self-hosted equivalent: both would die with the
 machine they watch, at the exact moment the alert matters. That is why the
 third-party dependency is structural here rather than a shortcut.
+
+Two more costs ride along. The ntfy topic is a write credential, not just an
+identifier: anyone holding it can publish to the same channel, so its leak
+means forged alerts, not just read access, and it exists in clear inside the
+Healthchecks account, outside this repository's SOPS+age control, because the
+witness notifies through the same topic. And detection of a broken chain takes
+up to about an hour by design (15-minute heartbeat, 45-minute grace), during
+which every alert this platform can raise, including ADR-0017's thermal one,
+is silently undelivered.
 
 **Accepted by:** ADR-0018.
 **Revisits when:** either free tier changes terms. The mitigation is already
