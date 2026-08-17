@@ -32,16 +32,17 @@ zfs_state_pool_root_properties:
   relatime: "on"
 
 # Datasets ADR-0010's table names explicitly: Immich's Postgres (+
-# VectorChord), any other app database holding user-generated state, and
-# Immich's generated derivatives (thumbs/, encoded-video/). Recordsize 32K
-# on the database datasets is OpenZFS's own PostgreSQL tuning guidance;
+# VectorChord), any other app database holding user-generated state,
+# Immich's generated derivatives (thumbs/, encoded-video/), and (#167)
+# observability's VictoriaMetrics/VictoriaLogs storage. Recordsize 32K on
+# the database datasets is OpenZFS's own PostgreSQL tuning guidance;
 # `copies=2` is scoped to the Immich database alone, the one slice ADR-0010
-# names irreplaceable. Everything else the ADR mentions (observability,
-# the model cache, profile/backups/) has its exact dataset boundary left to
-# whichever ticket actually installs that workload, per the ADR's own
-# "left to the installing ticket" — creating a placeholder dataset for a
-# workload that doesn't exist yet would be guessing at a boundary nothing
-# needs guessed yet.
+# names irreplaceable. What the ADR mentions but this workload doesn't
+# install yet (the model cache, profile/backups/) still has its exact
+# dataset boundary left to whichever ticket actually installs that
+# workload, per the ADR's own "left to the installing ticket" — creating a
+# placeholder dataset for a workload that doesn't exist yet would be
+# guessing at a boundary nothing needs guessed yet.
 zfs_state_datasets:
   - name: immich-db
     properties:
@@ -64,3 +65,19 @@ zfs_state_datasets:
   # so the key must exist even when there's nothing to set).
   - name: immich-redis
     properties: {}
+  # Observability's VictoriaMetrics/VictoriaLogs storage (ADR-0010: "left to
+  # whichever ticket installs the pools", #167). Two datasets, not one,
+  # matching the immich-db/immich-derivatives split by component rather than
+  # by app. Neither gets `copies=2`: ADR-0010 scopes that to the one
+  # irreplaceable slice (Immich's Postgres), and both stores are regenerable
+  # from raw metrics/log data VictoriaMetrics and VictoriaLogs re-scrape or
+  # re-ingest, same reasoning as immich-derivatives. atime=off, same rule as
+  # every other database/derivative dataset here; no recordsize override,
+  # since (unlike Postgres) neither store ships OpenZFS tuning guidance to
+  # follow, so the pool root's default stands.
+  - name: victoriametrics
+    properties:
+      atime: "off"
+  - name: victorialogs
+    properties:
+      atime: "off"

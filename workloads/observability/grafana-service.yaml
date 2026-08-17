@@ -1,0 +1,24 @@
+# NodePort, not Ingress: ADR-0011 keeps this platform private-only, same
+# reasoning as workloads/immich/server-service.yaml. Reachable at
+# <node-LAN-IP>:30300 and <node-Tailscale-IP>:30300 alike.
+#
+# 30300, not 33000: immich-server's own NodePort is built by adding 30000
+# to its container port (2283 -> 32283) because the result stays inside
+# k3s's default 30000-32767 range. Grafana's default port, 3000, does not:
+# 30000+3000 overflows the range by 233. 30300 keeps the same "recognizable
+# from the real port" intent the immich convention establishes, dropping
+# 3000's trailing zero instead of adding it whole.
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: observability
+spec:
+  type: NodePort
+  selector:
+    app: grafana
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+      nodePort: 30300

@@ -1,0 +1,44 @@
+# Static `local` PersistentVolume, no CSI driver, no dynamic provisioning
+# (ADR-0014, same pattern as workloads/immich/postgres-pv.yaml): k3s's
+# bundled local-path-provisioner is disabled at install
+# (ansible/roles/k3s/defaults/main.yml), so nothing else could bind this
+# claim by accident.
+#
+# Backed by the `victoriametrics` ZFS dataset (ansible/roles/zfs/defaults/
+# main.yml, #167, per ADR-0010's "left to whichever ticket installs the
+# pools"). ZFS's own default mountpoint for the `state` pool is /state, so
+# the dataset mounts at /state/victoriametrics.
+#
+# nodeAffinity is required (not a pod-level nodeSelector): this is what the
+# scheduler actually uses to place the pod on the one node that has this
+# path. The label value is the generic Ansible alias k3s's own role applies
+# (ADR-0015, #131), never the real OS hostname.
+#
+# Capacity is declarative only, local volumes enforce nothing; 20Gi is the
+# larger half of ADR-0002's 10-30 GB "Observability, 30-day retention"
+# estimate, split against victorialogs-pv.yaml's 10Gi to match ADR-0010's
+# "observability's ... single largest writer, 10 of the 16 GB/day budget"
+# (metrics dominate over logs here). Reclaim policy is Retain, matching
+# every other local PV in this repo: nothing here auto-deletes the
+# underlying dataset.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: victoriametrics
+spec:
+  capacity:
+    storage: 20Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  local:
+    path: /state/victoriametrics
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: homelab.local/node
+              operator: In
+              values:
+                - node1

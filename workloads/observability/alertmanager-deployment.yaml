@@ -1,0 +1,71 @@
+# Standalone Alertmanager (ADR-0004, ADR-0018: "vmalert and Alertmanager
+# both run in-cluster").
+#
+# Image pinned to a manifest-list digest for linux/amd64, resolved from
+# prom/alertmanager:v0.34.0 (latest stable release, 2026-08-16) via the
+# Docker Hub registry API. ADR-0018 requires >= 0.32.0 for the webhook
+# payload templating the future ntfy receiver needs (#170); 0.34.0 clears
+# that floor with margin.
+#
+# No PVC: `--storage.path` holds silences and the notification log.
+# ponytail: an emptyDir loses both across a pod restart or reschedule,
+# acceptable today since no route/receiver exists yet to have state worth
+# keeping (#168-170 still land the real config). Give it a ZFS dataset and
+# local PV, same pattern as victoriametrics-pv.yaml, if losing an
+# in-progress silence during a restart ever actually costs something.
+#
+# Memory: 128 MiB, the other half of ADR-0004's combined 256 MiB
+# vmalert+Alertmanager row (vmalert-deployment.yaml carries the same
+# ponytail note on the split itself).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alertmanager
+  template:
+    metadata:
+      labels:
+        app: alertmanager
+    spec:
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.34.0@sha256:268d4bf0e4bc0fe6dbdef6a59ce81a2918c88458bf8edf7dd0572ad372a093e6
+          args:
+            - --config.file=/etc/alertmanager/alertmanager.yml
+            - --storage.path=/alertmanager
+          ports:
+            - name: http
+              containerPort: 9093
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alertmanager
+            - name: storage
+              mountPath: /alertmanager
+          resources:
+            requests:
+              memory: 128Mi
+            limits:
+              memory: 128Mi
+      volumes:
+        - name: config
+          configMap:
+            name: alertmanager-config
+        - name: storage
+          emptyDir: {}

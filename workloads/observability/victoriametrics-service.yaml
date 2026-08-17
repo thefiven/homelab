@@ -1,0 +1,16 @@
+# Plain ClusterIP: VictoriaMetrics is consumed in-cluster only (Grafana's
+# datasource, vmalert's -datasource.url), never by the operator directly
+# (unlike Grafana, no user story here asks for LAN/Tailscale access to
+# VictoriaMetrics's own vmui).
+apiVersion: v1
+kind: Service
+metadata:
+  name: victoriametrics
+  namespace: observability
+spec:
+  selector:
+    app: victoriametrics
+  ports:
+    - name: http
+      port: 8428
+      targetPort: http

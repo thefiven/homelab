@@ -1,0 +1,82 @@
+# Grafana (ADR-0004: "Grafana for dashboards"). Deployment, not
+# StatefulSet: single replica, no per-replica storage identity needed.
+#
+# Image pinned to a manifest-list digest for linux/amd64, resolved from
+# grafana/grafana:13.1.3 (latest stable release, 2026-08-17) via the
+# Docker Hub registry API.
+#
+# `data` is an emptyDir, not a PVC: ADR-0010 names only VictoriaMetrics's
+# and VictoriaLogs's storage as the observability datasets left to this
+# ticket, not Grafana's own sqlite state. This ticket's scope is
+# deliberately "no curated Grafana dashboard" (#160's Out of Scope), so
+# there is nothing irreplaceable sitting in that database yet either.
+# ponytail: dashboards, users and settings reset on every pod restart or
+# reschedule; give it a ZFS dataset and a local PV, same pattern as
+# victoriametrics-pv.yaml, once curated dashboards actually exist to lose.
+#
+# GF_INSTALL_PLUGINS pulls the VictoriaLogs datasource plugin on start
+# (grafana-configmap.yaml's rationale). fsGroup: 472 matches the image's
+# own `grafana` UID (upstream Dockerfile), so the emptyDir mount is
+# writable without it, the same fix Grafana's own Helm chart applies for
+# an external volume.
+#
+# No admin credential is set: #160 scopes secrets to ntfy and Healthchecks
+# only (#169), and this platform has no public exposure (ADR-0011) to
+# harden the image's own default admin/admin against beyond changing it by
+# hand after first login.
+#
+# Memory: 768 MiB request and limit both, ADR-0004's split.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      securityContext:
+        fsGroup: 472
+      containers:
+        - name: grafana
+          image: grafana/grafana:13.1.3@sha256:e27e68cfd5795c1bea54950766078a02e84dfa3bafe0a4d0e5382f713dfd8e4e
+          env:
+            - name: GF_INSTALL_PLUGINS
+              value: victoriametrics-logs-datasource
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/grafana
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+          resources:
+            requests:
+              memory: 768Mi
+            limits:
+              memory: 768Mi
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: datasources
+          configMap:
+            name: grafana-datasources

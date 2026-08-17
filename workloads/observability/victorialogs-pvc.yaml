@@ -1,0 +1,14 @@
+# Binds by name to the static PV in victorialogs-pv.yaml, same pattern as
+# victoriametrics-pvc.yaml.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: victorialogs
+  namespace: observability
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  volumeName: victorialogs

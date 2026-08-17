@@ -1,0 +1,15 @@
+# Binds by name to the static PV in victoriametrics-pv.yaml (ADR-0014: no
+# StorageClass object exists, same reasoning as
+# workloads/immich/postgres-pvc.yaml). `volumeName` pins the match directly.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: victoriametrics
+  namespace: observability
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  volumeName: victoriametrics

@@ -1,0 +1,79 @@
+# vmalert (ADR-0004: "vmalert evaluates Prometheus-compatible alerting
+# rules against VictoriaMetrics"; ADR-0018: "vmalert and Alertmanager both
+# run in-cluster").
+#
+# Image pinned to a manifest-list digest for linux/amd64, resolved from
+# victoriametrics/vmalert:v1.150.0 (matches victoriametrics-deployment.yaml's
+# version, since vmalert is versioned and released alongside VictoriaMetrics
+# itself in the same repository) via the Docker Hub registry API.
+#
+# -datasource.url points at victoriametrics-service.yaml's in-cluster DNS
+# name; -notifier.url at alertmanager-service.yaml's. No -remoteWrite.url:
+# that flag only matters for recording rules (none exist here) or
+# persisting alert-firing state across restarts, neither of which #160
+# asks for.
+#
+# -evaluationInterval=1m matches victoriametrics-configmap.yaml's
+# scrape_interval: 60s. Evaluating faster than fresh data arrives would
+# just re-read the same scrape.
+#
+# -rule points at vmalert-configmap.yaml's placeholder; #168 replaces its
+# content, not this flag.
+#
+# No PVC: vmalert holds only in-memory alert-firing state, nothing this
+# ticket asks to survive a restart.
+#
+# Memory: 128 MiB, half of ADR-0004's combined 256 MiB vmalert+Alertmanager
+# row. ponytail: an even split with no measured basis (ADR-0004 gives the
+# pair one figure, not a per-process breakdown); rebalance once real usage
+# under load is known.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vmalert
+  namespace: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vmalert
+  template:
+    metadata:
+      labels:
+        app: vmalert
+    spec:
+      containers:
+        - name: vmalert
+          image: victoriametrics/vmalert:v1.150.0@sha256:69da71ec459683a57170afcd2f43ed3f1ffcb4d57dff583ee5673ff8fd784ba0
+          args:
+            - -datasource.url=http://victoriametrics:8428
+            - -notifier.url=http://alertmanager:9093
+            - -rule=/etc/vmalert/rules/*.yml
+            - -evaluationInterval=1m
+          ports:
+            - name: http
+              containerPort: 8880
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          volumeMounts:
+            - name: rules
+              mountPath: /etc/vmalert/rules
+          resources:
+            requests:
+              memory: 128Mi
+            limits:
+              memory: 128Mi
+      volumes:
+        - name: rules
+          configMap:
+            name: vmalert-rules

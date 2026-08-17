@@ -1,0 +1,20 @@
+# Placeholder config: a route needs a receiver to name, and a receiver with
+# no integrations configured is a valid, silently-drops-everything
+# Alertmanager config (the documented "null receiver" pattern), good
+# enough to let this Deployment start clean.
+#
+# The real route tree and inhibit_rules (node-down suppressing the other
+# four categories, per ADR-0004/ADR-0018) are #168's scope; the ntfy
+# `webhook_config` and its templated payload are #169 (the secret) and
+# #170 (the payload itself). None of that is decided by this file.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: observability
+data:
+  alertmanager.yml: |
+    route:
+      receiver: placeholder
+    receivers:
+      - name: placeholder
