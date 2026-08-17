@@ -1,10 +1,23 @@
-# Placeholder rule file: vmalert's `-rule` flag needs at least one file to
-# load at start, and #160's five alert categories (node unreachable, disk
-# near full, backup missed RPO, certificate expiring, thermal) are #168's
-# scope, not this ticket's ("workloads/observability/ manifests", the
-# deployment shape, per #160's breakdown). `groups: []` is a valid,
-# rule-less vmalert config, so this Deployment starts clean rather than
-# crash-looping on a missing/empty `-rule` glob match until #168 lands.
+# vmalert's alerting rules (#168: PromQL for ADR-0004's four original
+# categories plus ADR-0017's thermal, and the inhibition wiring that lives
+# in alertmanager-configmap.yaml's inhibit_rules, not here).
+#
+# Four rule groups, not five. "Backup missed its RPO window" has no rule
+# in this file: ADR-0018 amends ADR-0004 on that category's *mechanism*,
+# not its existence ("This amends ADR-0004 on the mechanism of its third
+# category ... which now reports by silence to an external check-in
+# service rather than by a rule evaluated against a metric nothing
+# publishes"). A restic dump has no Prometheus metric to alert on and
+# ADR-0017 already refused the textfile collector that would have
+# manufactured one; the category is instead a Healthchecks.io check pinged
+# directly by the backup CronJob, wired in #169 (secret) and #170
+# (kustomize check + wire secrets). Writing a dormant PromQL rule for it
+# here would invent a metric name nothing will ever export.
+#
+# node-exporter's default collector set (ansible/roles/node-exporter)
+# publishes every metric below: `up`, `node_filesystem_*` (filesystem
+# collector) and `node_hwmon_*` (hwmon collector). VictoriaMetrics's own
+# scrape job is named `node-exporter` (victoriametrics-configmap.yaml).
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -12,4 +25,111 @@ metadata:
   namespace: observability
 data:
   rules.yml: |
-    groups: []
+    groups:
+      # Root cause (ADR-0004: "the root cause. Every other alert is
+      # inhibited when this one fires"). Scoped to the scrape target, not
+      # the whole machine: if node_exporter stops answering while k3s and
+      # Alertmanager stay up (a crashed exporter, a network blip between
+      # VictoriaMetrics and the host), this still fires and inhibits disk
+      # and thermal, which read no data without it. If the whole node dies,
+      # Alertmanager dies with it and this alert (like everything else
+      # here) never posts. That full-outage case is structurally the
+      # Healthchecks Watchdog's job instead (ADR-0018), not vmalert's.
+      # `for: 5m` rides out a single missed 60s scrape before treating the
+      # gap as real.
+      - name: node-unreachable
+        rules:
+          - alert: NodeUnreachable
+            expr: up{job="node-exporter"} == 0
+            for: 5m
+            labels:
+              category: node
+            annotations:
+              summary: "node_exporter is not being scraped"
+              description: >-
+                VictoriaMetrics has not scraped node_exporter on
+                {{ $labels.instance }} for at least 5 minutes.
+
+      # ADR-0004's second category. Threshold (10% free) and duration are
+      # this rule's own implementation detail, not vendor- or ADR-sourced
+      # like the thermal thresholds below. `fstype!~...` drops the
+      # pseudo-filesystems (tmpfs, overlay, squashfs) that `df`-style
+      # collectors always report and that no operator can free space on.
+      - name: disk
+        rules:
+          - alert: DiskSpaceNearFull
+            expr: >-
+              (
+                node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"}
+                /
+                node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"}
+              ) * 100 < 10
+            for: 30m
+            labels:
+              category: disk
+            annotations:
+              summary: "{{ $labels.mountpoint }} on {{ $labels.instance }} is below 10% free"
+              description: >-
+                {{ $labels.mountpoint }} ({{ $labels.fstype }}) has
+                {{ $value | printf "%.1f" }}% space free for at least 30
+                minutes.
+
+      # ADR-0017's fifth category, one category carried on a `sensor`
+      # label rather than two ("the two expressions ride one category with
+      # the sensor carried on a label"). Both expressions join
+      # node_hwmon_temp_celsius against node_hwmon_sensor_label on
+      # (chip, sensor, instance): node_exporter's hwmon collector ships the
+      # human-readable sensor name (`Tctl`, `Composite`) only as that
+      # second, always-1 metric, not as a label on the temperature series
+      # itself. Thresholds, durations and the "absolute only, no idle
+      # baseline" design are ADR-0017's own decision, not chosen here.
+      - name: thermal
+        rules:
+          - alert: Thermal
+            expr: >-
+              node_hwmon_temp_celsius
+              * on(chip, sensor, instance)
+              node_hwmon_sensor_label{label="Tctl"} > 85
+            for: 15m
+            labels:
+              category: thermal
+              sensor: cpu
+            annotations:
+              summary: "CPU Tctl above 85C on {{ $labels.instance }}"
+              description: >-
+                k10temp's Tctl has read above 85C for 15 minutes, the point
+                at which the CPU_FAN curve has no lever left (ADR-0017).
+          - alert: Thermal
+            expr: >-
+              node_hwmon_temp_celsius
+              * on(chip, sensor, instance)
+              node_hwmon_sensor_label{label="Composite"} > 70
+            for: 30m
+            labels:
+              category: thermal
+              sensor: nvme
+            annotations:
+              summary: "NVMe Composite above 70C on {{ $labels.instance }}"
+              description: >-
+                An NVMe drive's Composite sensor has read above 70C for 30
+                minutes, past Kingston's warranted operating ceiling
+                (ADR-0017).
+
+      # ADR-0004's fourth category. Dormant by construction: the ingress
+      # spec that scrapes Traefik has not shipped (#160's scope note), so
+      # `traefik_tls_certs_not_after` has no series to evaluate and this
+      # rule never fires until that metric exists. 14 days of lead time on
+      # a gauge documented as "the expiration date of certificates" (Unix
+      # timestamp) is this rule's own implementation choice.
+      - name: certificate
+        rules:
+          - alert: CertificateExpiringSoon
+            expr: (traefik_tls_certs_not_after - time()) < 14 * 86400
+            for: 1h
+            labels:
+              category: certificate
+            annotations:
+              summary: "A TLS certificate expires within 14 days"
+              description: >-
+                traefik_tls_certs_not_after reports less than 14 days of
+                validity remaining for {{ $labels.instance }}.

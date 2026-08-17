@@ -1,12 +1,38 @@
-# Placeholder config: a route needs a receiver to name, and a receiver with
-# no integrations configured is a valid, silently-drops-everything
-# Alertmanager config (the documented "null receiver" pattern), good
-# enough to let this Deployment start clean.
+# Alertmanager's route tree and inhibition (#168). The receivers stay
+# empty integrations, the same "valid, silently-drops-everything" shape
+# the placeholder used: the ntfy `webhook_config` and its templated
+# payload need the topic secret #169 introduces and #170 wires in, and
+# nothing here decides that payload. What #168 owns is *which* alerts
+# reach which receiver name, and the inhibition between them.
 #
-# The real route tree and inhibit_rules (node-down suppressing the other
-# four categories, per ADR-0004/ADR-0018) are #168's scope; the ntfy
-# `webhook_config` and its templated payload are #169 (the secret) and
-# #170 (the payload itself). None of that is decided by this file.
+# `null`: alerts that never leave this cluster on purpose. NodeUnreachable
+# is routed here, not to `ntfy`. ADR-0018: "Node unreachable is the one
+# category this route cannot carry, structurally. Alertmanager runs
+# in-cluster on the machine that alert watches, so if the node is truly
+# unreachable, the Alertmanager meant to post the notification is
+# unreachable with it." Its own notification is instead the Healthchecks
+# Watchdog's job (#169/#170); this alert's only job here is feeding
+# inhibit_rules below. The explicit `category: node` route below matches
+# the top-level default receiver today, but it is kept rather than left
+# implicit: NodeUnreachable must never reach ntfy regardless of what a
+# later category's default routing needs, and an explicit route says so
+# even if the top-level default ever changes.
+#
+# `ntfy`: the other three rule groups' alerts (disk, thermal, certificate).
+# ADR-0018's "four of the five categories" also counts backup, which
+# reaches the same ntfy topic through Healthchecks' own integration
+# (#169/#170), not through this Alertmanager route at all.
+#
+# The `disk|thermal|certificate` category list is written once, as a YAML
+# anchor, and reused by inhibit_rules below rather than repeated: the two
+# lists must always name the same categories, and a copy-pasted string in
+# two places is exactly what drifts silently when a category is added.
+#
+# inhibit_rules has no `equal:` list: this is a single-node platform, and
+# NodeUnreachable and, say, CertificateExpiringSoon carry no shared label
+# to match on (different scrape jobs entirely). ADR-0004's own reasoning
+# for inhibition ("a single node going down takes every service with it")
+# is exactly the case an unconditional source/target match is for.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -15,6 +41,19 @@ metadata:
 data:
   alertmanager.yml: |
     route:
-      receiver: placeholder
+      receiver: 'null'
+      routes:
+        - match:
+            category: node
+          receiver: 'null'
+        - match_re:
+            category: &ntfy_categories disk|thermal|certificate
+          receiver: ntfy
     receivers:
-      - name: placeholder
+      - name: 'null'
+      - name: ntfy
+    inhibit_rules:
+      - source_match:
+          alertname: NodeUnreachable
+        target_match_re:
+          category: *ntfy_categories
