@@ -1,0 +1,42 @@
+# VictoriaMetrics discovers node_exporter through the Kubernetes API
+# (victoriametrics-configmap.yaml's `kubernetes_sd_configs`, role: node)
+# instead of a literal node IP: ADR-0015 never lets a real designator (this
+# machine's LAN address) land in a tracked file, and the Node object's own
+# address is exactly the value that discovery reads at scrape time instead.
+# That client needs its own RBAC: the default ServiceAccount every namespace
+# gets carries no permissions at all, so without this it would fail listing
+# Node objects at scrape time.
+#
+# get/list/watch on `nodes` only: role: node's SD client reads Node objects
+# directly; it does not proxy through the API server the way scraping
+# kubelet/cAdvisor metrics would, so no `nodes/metrics` or `nodes/proxy`
+# permission is added for a scrape path this config doesn't use.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: victoriametrics
+  namespace: observability
+---
+# Cluster-scoped, not a namespaced Role: Node objects aren't namespaced
+# either, so a Role/RoleBinding pair has nothing to bind against.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: victoriametrics-node-discovery
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: victoriametrics-node-discovery
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: victoriametrics-node-discovery
+subjects:
+  - kind: ServiceAccount
+    name: victoriametrics
+    namespace: observability

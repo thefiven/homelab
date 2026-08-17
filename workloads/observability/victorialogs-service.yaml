@@ -1,0 +1,14 @@
+# Plain ClusterIP, same reasoning as victoriametrics-service.yaml: consumed
+# in-cluster only, by Grafana's datasource.
+apiVersion: v1
+kind: Service
+metadata:
+  name: victorialogs
+  namespace: observability
+spec:
+  selector:
+    app: victorialogs
+  ports:
+    - name: http
+      port: 9428
+      targetPort: http

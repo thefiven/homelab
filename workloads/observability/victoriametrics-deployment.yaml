@@ -1,0 +1,88 @@
+# VictoriaMetrics single-node (ADR-0004: "VictoriaMetrics single-node plus
+# VictoriaLogs, with Grafana for dashboards"). Deployment, not StatefulSet:
+# same reasoning as workloads/immich/server-deployment.yaml: nothing here
+# needs per-replica storage identity, the one PVC is bound by name
+# (victoriametrics-pvc.yaml), and replicas stays at 1.
+#
+# Image pinned to a manifest-list digest for linux/amd64, resolved from
+# victoriametrics/victoria-metrics:v1.150.0 (latest stable release,
+# 2026-08-17) via the Docker Hub registry API, same pattern
+# workloads/immich uses for its own images.
+#
+# No nodeAffinity/nodeSelector here: victoriametrics-pv.yaml's static
+# `local` PV already carries the required nodeAffinity (ADR-0014,
+# ADR-0015), which is what the scheduler uses to place this pod on node1.
+#
+# -retentionPeriod=30d matches ADR-0002's storage-capacity table basis
+# ("Observability, 30-day retention"), not VictoriaMetrics's own coincidental
+# 31-day default, so the retention window is a decision this file makes
+# rather than an accident of the tool's default.
+#
+# -maxIngestionRate and -search.maxUniqueTimeseries are ADR-0004's
+# cardinality guards ("set at the start, not after a first incident").
+# ponytail: both values are a generous headroom over node_exporter's own
+# series count (#166, one target, on the order of 1,000 series at a 60s
+# scrape interval), not a measured ceiling: there is no second scrape
+# target yet to size against. Tighten once vmalert (#168) or a real
+# incident gives an actual number to size to.
+#
+# Memory: 1.25 GiB request and limit both, ADR-0004's split. No CPU
+# request or limit, matching every other workload in this repo (ADR-0002
+# rejects per-service CPU quotas outright).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: victoriametrics
+  namespace: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: victoriametrics
+  template:
+    metadata:
+      labels:
+        app: victoriametrics
+    spec:
+      serviceAccountName: victoriametrics
+      containers:
+        - name: victoriametrics
+          image: victoriametrics/victoria-metrics:v1.150.0@sha256:aea44b421244dce14e5bae51be1c45a249f9cc8b6d6e79ef33680776fd514e7f
+          args:
+            - -storageDataPath=/storage
+            - -promscrape.config=/etc/victoriametrics/promscrape.yml
+            - -retentionPeriod=30d
+            - -maxIngestionRate=1000
+            - -search.maxUniqueTimeseries=100000
+          ports:
+            - name: http
+              containerPort: 8428
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          volumeMounts:
+            - name: storage
+              mountPath: /storage
+            - name: promscrape-config
+              mountPath: /etc/victoriametrics
+          resources:
+            requests:
+              memory: 1.25Gi
+            limits:
+              memory: 1.25Gi
+      volumes:
+        - name: storage
+          persistentVolumeClaim:
+            claimName: victoriametrics
+        - name: promscrape-config
+          configMap:
+            name: victoriametrics-promscrape-config

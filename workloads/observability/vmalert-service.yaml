@@ -1,0 +1,15 @@
+# Plain ClusterIP: vmalert exposes its own UI/metrics, but no user story in
+# #160 asks for direct operator access to it (Grafana is the one surface
+# named for that).
+apiVersion: v1
+kind: Service
+metadata:
+  name: vmalert
+  namespace: observability
+spec:
+  selector:
+    app: vmalert
+  ports:
+    - name: http
+      port: 8880
+      targetPort: http

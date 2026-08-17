@@ -1,0 +1,36 @@
+# Grafana's datasource provisioning (apiVersion 1, "configuration as code":
+# files under /etc/grafana/provisioning/datasources are read on every
+# start, no click-through setup needed).
+#
+# VictoriaMetrics: `type: prometheus`, Grafana's own built-in datasource,
+# no plugin. VictoriaMetrics is Prometheus-remote-read/PromQL-compatible by
+# design (ADR-0004: "remain PromQL-compatible for querying"), so nothing
+# beyond pointing at its URL is needed; the dedicated
+# `victoriametrics-metrics-datasource` plugin exists but adds nothing this
+# scale needs.
+#
+# VictoriaLogs: `type: victoriametrics-logs-datasource`. Unlike metrics,
+# Grafana has no built-in datasource that speaks LogsQL (the Loki
+# datasource speaks LogQL, a different language), so this one plugin is
+# unavoidable, installed at container start via
+# grafana-deployment.yaml's `GF_INSTALL_PLUGINS`, per VictoriaMetrics's own
+# published plugin docs (VictoriaMetrics/victorialogs-datasource, verified
+# 2026-08-17).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: observability
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: VictoriaMetrics
+        type: prometheus
+        access: proxy
+        url: http://victoriametrics:8428
+        isDefault: true
+      - name: VictoriaLogs
+        type: victoriametrics-logs-datasource
+        access: proxy
+        url: http://victorialogs:9428

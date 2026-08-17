@@ -1,0 +1,15 @@
+# Placeholder rule file: vmalert's `-rule` flag needs at least one file to
+# load at start, and #160's five alert categories (node unreachable, disk
+# near full, backup missed RPO, certificate expiring, thermal) are #168's
+# scope, not this ticket's ("workloads/observability/ manifests", the
+# deployment shape, per #160's breakdown). `groups: []` is a valid,
+# rule-less vmalert config, so this Deployment starts clean rather than
+# crash-looping on a missing/empty `-rule` glob match until #168 lands.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vmalert-rules
+  namespace: observability
+data:
+  rules.yml: |
+    groups: []

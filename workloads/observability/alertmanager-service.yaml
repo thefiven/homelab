@@ -1,0 +1,15 @@
+# Plain ClusterIP: consumed by vmalert's -notifier.url in-cluster. No
+# clustering/gossip port (9094) exposed either, since replicas stays at 1
+# (ADR-0018 doesn't ask for Alertmanager HA).
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: observability
+spec:
+  selector:
+    app: alertmanager
+  ports:
+    - name: http
+      port: 9093
+      targetPort: http

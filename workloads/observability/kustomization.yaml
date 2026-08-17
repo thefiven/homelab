@@ -1,0 +1,31 @@
+# Flux's `workloads` Kustomization (clusters/homelab/workloads.yaml) has no
+# kustomization.yaml of its own at ./workloads, so kustomize-controller
+# generates one on the fly. That generator's own directory walk (fluxcd/pkg
+# kustomize_generator.go, scanManifests) stops descending as soon as it
+# finds a subdirectory carrying its own kustomization.yaml file, adding the
+# whole directory as one resource entry instead of flattening every
+# manifest inside it (#133, same reasoning as workloads/immich/
+# kustomization.yaml).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - victoriametrics-rbac.yaml
+  - victoriametrics-pv.yaml
+  - victoriametrics-pvc.yaml
+  - victoriametrics-configmap.yaml
+  - victoriametrics-deployment.yaml
+  - victoriametrics-service.yaml
+  - victorialogs-pv.yaml
+  - victorialogs-pvc.yaml
+  - victorialogs-deployment.yaml
+  - victorialogs-service.yaml
+  - grafana-configmap.yaml
+  - grafana-deployment.yaml
+  - grafana-service.yaml
+  - vmalert-configmap.yaml
+  - vmalert-deployment.yaml
+  - vmalert-service.yaml
+  - alertmanager-configmap.yaml
+  - alertmanager-deployment.yaml
+  - alertmanager-service.yaml

@@ -1,0 +1,30 @@
+# Static `local` PersistentVolume, same pattern as victoriametrics-pv.yaml.
+#
+# Backed by the `victorialogs` ZFS dataset (ansible/roles/zfs/defaults/
+# main.yml, #167), mounting at /state/victorialogs.
+#
+# 10Gi: the smaller half of ADR-0002's 10-30 GB "Observability, 30-day
+# retention" estimate, split against victoriametrics-pv.yaml's 20Gi per
+# ADR-0010's "VictoriaMetrics/VictoriaLogs ... single largest writer, 10 of
+# the 16 GB/day budget" (metrics dominate over logs here).
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: victorialogs
+spec:
+  capacity:
+    storage: 10Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  local:
+    path: /state/victorialogs
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: homelab.local/node
+              operator: In
+              values:
+                - node1

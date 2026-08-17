@@ -1,0 +1,76 @@
+# VictoriaLogs single-node (ADR-0004). Deployment, not StatefulSet, same
+# reasoning as victoriametrics-deployment.yaml.
+#
+# Image pinned to a manifest-list digest for linux/amd64, resolved from
+# victoriametrics/victoria-logs:v1.52.0 (latest stable release, 2026-08-17)
+# via the Docker Hub registry API.
+#
+# No nodeAffinity/nodeSelector here: victorialogs-pv.yaml's static `local`
+# PV already carries it.
+#
+# -retentionPeriod=30d: same basis as victoriametrics-deployment.yaml.
+# -retention.maxDiskSpaceUsageBytes=8GiB, under victorialogs-pvc.yaml's
+# 10Gi request: ADR-0004 names this VictoriaLogs's "single most useful
+# safety property", the disk-bounded retention VictoriaMetrics has no
+# equivalent for, so old partitions are dropped before the PVC itself
+# fills. Both flags are mutually independent per VictoriaLogs's own docs
+# (time-based and disk-based retention are each enforced, not one or the
+# other), so both stay set rather than picking one.
+#
+# No ingestion source is wired here (no journald forwarder, no syslog
+# listener): nothing in #160's Implementation Decisions names one, and
+# every log-emitting workload this platform runs today (Immich) predates
+# this ticket without a shipping story either. VictoriaLogs is deployed
+# queryable and ready to receive; wiring an actual source is future work,
+# not a gap in this manifest.
+#
+# Memory: 768 MiB request and limit both, ADR-0004's split.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: victorialogs
+  namespace: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: victorialogs
+  template:
+    metadata:
+      labels:
+        app: victorialogs
+    spec:
+      containers:
+        - name: victorialogs
+          image: victoriametrics/victoria-logs:v1.52.0@sha256:8f2140dca110705916751b9cdf57c2309555b6f1cf2707be1ee1a774c8c1e1f9
+          args:
+            - -storageDataPath=/storage
+            - -retentionPeriod=30d
+            - -retention.maxDiskSpaceUsageBytes=8GiB
+          ports:
+            - name: http
+              containerPort: 9428
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          volumeMounts:
+            - name: storage
+              mountPath: /storage
+          resources:
+            requests:
+              memory: 768Mi
+            limits:
+              memory: 768Mi
+      volumes:
+        - name: storage
+          persistentVolumeClaim:
+            claimName: victorialogs

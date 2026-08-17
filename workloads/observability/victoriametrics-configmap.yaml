@@ -1,0 +1,45 @@
+# VictoriaMetrics's own scrape config (`-promscrape.config`, ADR-0004:
+# "self-scraping ... VictoriaMetrics scrapes Prometheus-format targets on
+# its own", removing the separate collector a Prometheus-based stack would
+# need). One target class today: node_exporter (#166), the source both
+# ADR-0017's thermal alert and ADR-0004's disk-near-full alert need.
+#
+# Discovered via the Kubernetes API (`kubernetes_sd_configs`, role: node),
+# not a static target on a literal IP: ADR-0015 never lets a real
+# designator land in a tracked file, and the Node object's own address,
+# read from the API at scrape time, is exactly the value that would
+# otherwise have to be hand-written here. No `api_server`/`tls_config` is
+# set: with neither given, VictoriaMetrics falls back to the in-cluster
+# config every pod gets for free (the mounted ServiceAccount token and CA,
+# victoriametrics-rbac.yaml's grant), the same default Prometheus itself
+# documents.
+#
+# role: node's discovery sets `__address__` to `<node-address>:10250`, the
+# kubelet's port; node_exporter listens on 9100 instead (the Debian package
+# default, unchanged by ansible/roles/node-exporter), so the relabeling
+# below only swaps the port, keeping whatever address the API reports.
+#
+# scrape_interval: 60s, not VictoriaMetrics's usual 15s starting point:
+# ADR-0002 names this explicitly ("forces a 60-second scrape interval
+# rather than 15") as one of the three levers that keep the 10 GB/day
+# observability write envelope binding.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: victoriametrics-promscrape-config
+  namespace: observability
+data:
+  promscrape.yml: |
+    global:
+      scrape_interval: 60s
+    scrape_configs:
+      - job_name: node-exporter
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - source_labels: [__address__]
+            regex: '(.+):\d+'
+            target_label: __address__
+            replacement: '${1}:9100'
+          - source_labels: [__meta_kubernetes_node_name]
+            target_label: instance
