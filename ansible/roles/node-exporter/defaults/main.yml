@@ -1,0 +1,10 @@
+# Defaults for the `node-exporter` role.
+
+# ADR-0017: node_exporter is charged to ADR-0002's 1 GiB *host* envelope
+# (kernel, systemd, sshd, journald), not the 3 GiB observability envelope —
+# so this cap only has to hold the exporter itself, a single Go binary with
+# no server-side state, well clear of node_exporter's own published RSS
+# (tens of MiB). 128M leaves headroom without eating into the room the rest
+# of that shared gigabyte needs. Like the host envelope itself, this is an
+# estimate to be measured, not a figure derived from this machine.
+node_exporter_memory_max: 128M

@@ -1,1 +1,2 @@
 ansible/roles/nfs-client role-name
+ansible/roles/node-exporter role-name
