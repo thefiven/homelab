@@ -54,7 +54,12 @@ LaCie 5big Network 2 considered as a candidate medium was rejected: more
 obsolete than the DS412+ it would have supplemented, and it does not speak
 NFS, which ADR-0010 and the `nfs-client` role are built on.
 
-**Accepted by:** ADR-0012, sharpened by #7's correlated-wear finding.
+**Accepted by:** ADR-0012 (the sole-copy risk itself, and the NAS as its
+accepted SPOF), sharpened by #7's correlated-wear finding. The door's
+closure, that no second local copy is planned from owned hardware, is
+recorded from #97, #98 and #99's own follow-up comment, not from ADR-0012's
+text; it does not reopen ADR-0012's decision, since the second-local-copy
+option was never adopted there, only raised and left unspecified.
 **Revisits when:** budget exists for a second medium worth trusting, one
 that is NFS-capable and not itself more obsolete than the DS412+. No ticket
 is open toward this; it is the standing state of the corpus, not a deferred
@@ -83,11 +88,13 @@ either pool into a mirror without a rebuild.
 Neither the observability stack (#17: none of Prometheus, Loki,
 VictoriaMetrics or VictoriaLogs document an internal memory cap) nor a
 collaborative office server (#35) publishes one. Every memory limit on this
-platform is external: a cgroup, a systemd slice, an admission gate. The
-largest single line in the resource budget sits in the enforcement class
-that is weakest, kernel memory (the ZFS ARC), where even the external cap is
-a target rather than a guarantee: an upstream OpenZFS 2.3.x bug let the ARC
-exceed `zfs_arc_max`, fixed only in July 2025.
+platform is external: a cgroup, a systemd slice, an admission gate. Within
+the reserved floor of mandatory platform overhead (host, filesystem cache,
+control plane, GitOps, observability), the largest single line, the 5 GiB
+ZFS ARC, sits in the enforcement class that is weakest, kernel memory,
+invisible to any cgroup. Even its external cap is a target rather than a
+guarantee: an upstream OpenZFS 2.3.x bug let the ARC exceed `zfs_arc_max`,
+fixed only in July 2025.
 
 **Accepted by:** ADR-0002.
 **Revisits when:** a consumer this platform runs publishes its own
@@ -140,11 +147,11 @@ not a gap deferred to a future ticket.
 
 The board's entire case-fan group takes its one sense wire from `CPU_FAN`,
 driven by CPU temperature alone. A purely GPU-bound load, exactly what
-ADR-0002 budgets 8 GiB of Immich's machine-learning work to produce, heats
-the case while the curve sees a cool CPU and holds the whole airflow group
-at its 25% floor. `k10temp`, the signal the thermal alert reads, sees that
-only second-hand and late; the GPU itself is not in `hwmon` at all, so
-nothing on this platform alerts on it directly.
+Immich's machine-learning component (2 of its 8 GiB envelope, ADR-0002)
+produces, heats the case while the curve sees a cool CPU and holds the whole
+airflow group at its 25% floor. `k10temp`, the signal the thermal alert
+reads, sees that only second-hand and late; the GPU itself is not in
+`hwmon` at all, so nothing on this platform alerts on it directly.
 
 **Accepted by:** ADR-0017.
 **Revisits when:** covering it would need the textfile collector ADR-0004
