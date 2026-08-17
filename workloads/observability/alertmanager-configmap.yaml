@@ -1,9 +1,7 @@
-# Alertmanager's route tree and inhibition (#168). The receivers stay
-# empty integrations, the same "valid, silently-drops-everything" shape
-# the placeholder used: the ntfy `webhook_config` and its templated
-# payload need the topic secret #169 introduces and #170 wires in, and
-# nothing here decides that payload. What #168 owns is *which* alerts
-# reach which receiver name, and the inhibition between them.
+# Alertmanager's route tree, receivers and inhibition (#168, #170). What
+# #168 built stands unchanged: *which* alerts reach which receiver name,
+# and the inhibition between them. #170 fills in the two receivers
+# themselves, plus the Watchdog route neither one could carry alone.
 #
 # `null`: alerts that never leave this cluster on purpose. NodeUnreachable
 # is routed here, not to `ntfy`. ADR-0018: "Node unreachable is the one
@@ -11,17 +9,40 @@
 # in-cluster on the machine that alert watches, so if the node is truly
 # unreachable, the Alertmanager meant to post the notification is
 # unreachable with it." Its own notification is instead the Healthchecks
-# Watchdog's job (#169/#170); this alert's only job here is feeding
-# inhibit_rules below. The explicit `category: node` route below matches
-# the top-level default receiver today, but it is kept rather than left
-# implicit: NodeUnreachable must never reach ntfy regardless of what a
-# later category's default routing needs, and an explicit route says so
-# even if the top-level default ever changes.
+# Watchdog's job below; this alert's only job here is feeding inhibit_rules.
+# The explicit `category: node` route below matches the top-level default
+# receiver today, but it is kept rather than left implicit: NodeUnreachable
+# must never reach ntfy regardless of what a later category's default
+# routing needs, and an explicit route says so even if the top-level
+# default ever changes.
 #
 # `ntfy`: the other three rule groups' alerts (disk, thermal, certificate).
-# ADR-0018's "four of the five categories" also counts backup, which
-# reaches the same ntfy topic through Healthchecks' own integration
-# (#169/#170), not through this Alertmanager route at all.
+# webhook_config posts JSON to ntfy's publish schema (ADR-0018), on a
+# `url_file` rather than a hardcoded `url`: Alertmanager's config has no
+# secret-templating in `payload` (it is `{ <string>: <tmpl_string> }` Go
+# templates over alert data, nothing else), but `url` and `url_file` are
+# documented as mutually exclusive, `<secret>`-typed fields, so putting the
+# topic in the URL (`https://ntfy.sh/<topic>`, ntfy's other documented
+# publish form) instead of in the JSON body is what lets the topic stay a
+# file the ntfy-topic secret is mounted into, never a value baked into this
+# ConfigMap. alertmanager-deployment.yaml's init container builds that file
+# from the secret; `payload` here carries only non-secret, label-derived
+# fields. `priority` follows ntfy's own scale, thermal being the one
+# category where the delay itself is the risk (ADR-0017). ADR-0018's
+# "four of the five categories" also counts backup, which reaches the same
+# ntfy topic through Healthchecks' own integration (#169), not through this
+# Alertmanager route at all.
+#
+# `healthchecks-watchdog`: the Watchdog alert (vmalert-configmap.yaml),
+# always firing while node_exporter is scraped. Its `url_file` points
+# straight at the healthchecks-pings secret's WATCHDOG_PING_URL key - no
+# init container needed, that secret is already a complete URL. Routed on
+# `alertname` rather than `category` since Watchdog's `category: watchdog`
+# label matches neither the `node` nor the `disk|thermal|certificate`
+# routes, and giving it its own explicit route keeps that independent of
+# route ordering. `repeat_interval: 15m` is ADR-0018's cadence, narrower
+# than the top-level default, since only this route needs to keep posting
+# while nothing has changed - that is the whole heartbeat.
 #
 # The `disk|thermal|certificate` category list is written once, as a YAML
 # anchor, and reused by inhibit_rules below rather than repeated: the two
@@ -33,6 +54,18 @@
 # to match on (different scrape jobs entirely). ADR-0004's own reasoning
 # for inhibition ("a single node going down takes every service with it")
 # is exactly the case an unconditional source/target match is for.
+#
+# `group_by: ['...']` at the root, inherited by every child route: with no
+# group_by, Alertmanager's own default batches every alert matching a route
+# into one notification group, and the ntfy payload's `.CommonAnnotations`/
+# `.CommonLabels` are the *intersection* across that group, not any one
+# alert's own values. The two Thermal rules (cpu Tctl, nvme Composite,
+# vmalert-configmap.yaml) share `alertname: Thermal` but carry different
+# `summary`/`description`, so both crossing threshold together would empty
+# the templated title and message - the docs' own documented fix is
+# `'...'`, which stops aggregating and gives each alert its own
+# notification. The docs call `'...'` unusual "unless you have a very low
+# alert volume", which this single-node platform is by construction.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -42,6 +75,7 @@ data:
   alertmanager.yml: |
     route:
       receiver: 'null'
+      group_by: ['...']
       routes:
         - match:
             category: node
@@ -49,9 +83,25 @@ data:
         - match_re:
             category: &ntfy_categories disk|thermal|certificate
           receiver: ntfy
+        - match:
+            alertname: Watchdog
+          receiver: healthchecks-watchdog
+          repeat_interval: 15m
     receivers:
       - name: 'null'
       - name: ntfy
+        webhook_configs:
+          - url_file: /generated/ntfy-url
+            send_resolved: false
+            payload:
+              title: '{{ .CommonAnnotations.summary }}'
+              message: '{{ .CommonAnnotations.description }}'
+              priority: '{{ if eq .CommonLabels.category "thermal" }}urgent{{ else if eq .CommonLabels.category "disk" }}high{{ else }}default{{ end }}'
+              tags: '{{ .CommonLabels.category }}'
+      - name: healthchecks-watchdog
+        webhook_configs:
+          - url_file: /secrets/healthchecks-pings/WATCHDOG_PING_URL
+            send_resolved: false
     inhibit_rules:
       - source_match:
           alertname: NodeUnreachable
