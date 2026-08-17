@@ -29,9 +29,5 @@ resources:
   - alertmanager-configmap.yaml
   - alertmanager-deployment.yaml
   - alertmanager-service.yaml
-  # secrets/ntfy-topic.sops.yaml and secrets/healthchecks-pings.sops.yaml
-  # (the Secret names alertmanager-deployment.yaml's volumes already
-  # reference) are not committed yet: scripts/observability-secrets-setup
-  # is a human-only wizard (#169) that has not been run. Add both here,
-  # same shape as workloads/immich/kustomization.yaml's
-  # secrets/immich-postgres.sops.yaml line, once they exist.
+  - secrets/ntfy-topic.sops.yaml
+  - secrets/healthchecks-pings.sops.yaml
