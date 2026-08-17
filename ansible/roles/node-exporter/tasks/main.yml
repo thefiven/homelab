@@ -9,8 +9,6 @@
 # collector set — no `ARGS` needed — already includes `hwmon` (`k10temp`,
 # NVMe `Composite`) and `filesystem`, which is every signal ADR-0017 and
 # ADR-0004 need; nothing here has to enable a collector by hand.
-# `--tags verify` proving the exporter is actually scraped is #171's
-# platform-invariant ticket, not this one.
 
 - name: Install the node_exporter package
   ansible.builtin.apt:
@@ -53,3 +51,61 @@
     name: prometheus-node-exporter
     enabled: true
     state: started
+
+# `--tags verify`: proves the eighth platform invariant
+# (docs/reference/platform-state.md), "node_exporter reachable and
+# scraped": a metric with a fresh enough timestamp, not just an open
+# port. Queries VictoriaMetrics's own `up{job="node-exporter"}` series
+# rather than curling node_exporter's :9100/metrics directly: a
+# reachable-but-unscraped exporter (a promscrape.yml typo, a stuck
+# target) would pass a direct curl but fail this, and this is the exact
+# series ADR-0018's Watchdog rule and NodeUnreachable alert both key off
+# (workloads/observability/vmalert-configmap.yaml), proving the
+# invariant against what the platform actually depends on, not a proxy
+# for it. No manual timestamp arithmetic: VictoriaMetrics's instant-query
+# staleness window (~5m, same default as Prometheus) already drops a
+# stale series from the result, so an empty result is itself the
+# "not fresh enough" case.
+#
+# `k3s kubectl get --raw` against the Service's own API-server proxy
+# path, the same "no port-forward, no extra tooling" approach the
+# `gitops` role's kubectl-based checks use, and the only reachable route
+# from the host: victoriametrics-service.yaml is a plain ClusterIP with
+# no NodePort. `argv`, not a shell string, for the same reason the `k3s`
+# role's own jsonpath check uses it: the query string's embedded quotes
+# and braces don't survive `command`'s shlex-splitting of a `cmd:`
+# string. `| default('')`, not a bare `k3s_role == 'server'`: this role
+# runs before `k3s` in site.yml (same ordering the `nvidia` role's own
+# verify task is in), so on a host where k3s_role is still unset this
+# must skip quietly rather than crash on an undefined variable ahead of
+# the `k3s` role's own, friendlier assert.
+- name: Query VictoriaMetrics for node_exporter's own up series
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - --raw
+      - /api/v1/namespaces/observability/services/victoriametrics:8428/proxy/api/v1/query?query=up{job="node-exporter"}
+  register: node_exporter_up_query
+  changed_when: false
+  check_mode: false
+  when: k3s_role | default('') == 'server'
+  tags: verify
+
+- name: Assert node_exporter is reachable and scraped
+  ansible.builtin.assert:
+    that:
+      - (node_exporter_up_query.stdout | from_json).status == 'success'
+      - (node_exporter_up_query.stdout | from_json).data.result | length > 0
+      - >-
+        (node_exporter_up_query.stdout | from_json).data.result
+        | map(attribute='value') | map('last')
+        | reject('equalto', '1') | list == []
+    fail_msg: >-
+      node_exporter is not reachable and scraped: VictoriaMetrics reports
+      no fresh up{job="node-exporter"} == 1 series.
+      {{ node_exporter_up_query.stdout }}
+    quiet: true
+  when: k3s_role | default('') == 'server'
+  tags: verify

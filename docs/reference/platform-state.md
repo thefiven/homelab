@@ -2,7 +2,7 @@
 
 What "the base platform is up" means. Each invariant below is owned by one
 role's `--tags verify` tasks — this page is an index into them, not a
-second copy of what they check. Run all seven at once:
+second copy of what they check. Run all eight at once:
 
 ```
 ansible-playbook ansible/site.yml --tags verify -l <host>
@@ -34,6 +34,13 @@ it runs, not committed to a doc that immediately goes stale.
 7. **No pending reboot.** `/var/run/reboot-required` is absent — the last
    applied change (kernel, GPU driver, ZFS module) is the one actually
    running. `base` role, `--tags verify`.
+8. **`node_exporter` reachable and scraped.** VictoriaMetrics reports a
+   fresh `up{job="node-exporter"} == 1` series, the same series
+   ADR-0018's Watchdog rule and `NodeUnreachable` alert key off
+   (`workloads/observability/vmalert-configmap.yaml`), so this invariant
+   is proven against what the platform actually depends on, not a direct
+   `:9100/metrics` curl that a stuck scrape target would still pass.
+   `node-exporter` role, `--tags verify`.
 
 ## Known gap: three components outside GitOps
 
