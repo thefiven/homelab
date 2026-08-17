@@ -23,12 +23,12 @@ not exist when the archive was written.
 
 Alertmanager ships native receivers for eighteen services and ntfy is not among
 them. What makes ntfy adapter-free here is recent: **Alertmanager 0.32.0,
-released 2026-04-08, added full payload templating for the webhook notifier**.
+released 2026-04-08, added full payload templating for the webhook notifier**
+("`[FEATURE] webhook: Add full payload templating support for notifier`",
+<https://github.com/prometheus/alertmanager/releases/tag/v0.32.0>).
 `webhook_config` now takes a `payload` field, a Go template whose output must be
 valid JSON, and ntfy publishes from JSON on `POST https://ntfy.sh/` with
-`topic`, `title`, `message`, `priority` and `tags`. The two meet exactly, with
-`http_config`'s arbitrary `http_headers` as a second path to the same result via
-ntfy's `X-Title` and `X-Priority` headers.
+`topic`, `title`, `message`, `priority` and `tags`. The two meet exactly.
 
 Before 0.32.0 the honest comparison would have gone the other way. A raw webhook
 to ntfy renders Alertmanager's fixed JSON schema as the notification body, which
@@ -44,10 +44,14 @@ Discord needs a webhook URL and an account. Pushover is natively supported and
 templatable but costs money once per platform, and #29 exists to avoid paying.
 ntfy asks for nothing: no sign-up, no token, no account.
 
-**The topic is the credential**, not an identifier. ntfy's own documentation is
-explicit: "Because there is no sign-up, the topic is essentially a password, so
-pick something that's not easily guessable." It is therefore a secret under
-ADR-0009 and is never committed in clear.
+**The topic is the credential, and specifically a write credential**, not an
+identifier. Publishing and subscribing use the same string, so holding it does
+not just let someone read this platform's alerts, it lets them publish to the
+same channel: a forged alert would land on the same phone as a real one,
+indistinguishable. ntfy's own documentation is explicit: "Because there is no
+sign-up, the topic is essentially a password, so pick something that's not
+easily guessable." It is therefore a secret under ADR-0009, guarding write
+access rather than mere visibility, and is never committed in clear.
 
 ## The witness: Healthchecks.io, on its free tier
 
@@ -117,13 +121,22 @@ heartbeat holds about eight hours of ping history and a fifteen-minute one holds
 about twenty-five. A faster heartbeat would buy minutes of detection and pay for
 them with a night's worth of forensics.
 
+Against #11's other figure, the 4-hours/month operational appetite, this design
+spends close to none of it. Standing it up is a one-time gesture: an account,
+a topic, three ping URLs. Nothing here is software to patch or a process to
+babysit, since both services are outbound-only and free-tier. What is left is
+reading a notification when one arrives, plus the near-zero human time ADR-0012
+already prices for the monthly `restic check`. Without this witness the budget
+would instead be spent discovering a silent failure by accident, which is the
+more expensive way to pay it.
+
 ## Three checks, and ADR-0004's third category finally gets a source
 
 Healthchecks holds **three** checks, not one:
 
 1. the Watchdog heartbeat above,
 2. the **daily PostgreSQL dump** (ADR-0012),
-3. the **monthly automated restore verification** (ADR-0012).
+3. the **monthly automated `restic check`** (ADR-0012).
 
 The second exists because reading ADR-0004 against the accepted set exposed the
 same hole ADR-0017 found under the disk alert: **"backup has not succeeded
@@ -131,8 +144,11 @@ within its RPO window" had no source either.** No accepted ADR publishes a
 restic metric, and ADR-0017 explicitly refused the textfile collector that would
 have manufactured one. A check-in service closes it for no code at all, since
 the `CronJob` pings its own check and its **silence is the alert**. The third
-check applies the same treatment to ADR-0012's monthly restore verification,
-which is exactly the kind of automated job whose failure is otherwise silent.
+check applies the same treatment to ADR-0012's monthly `restic check`, which
+verifies repository integrity and is exactly the kind of automated job whose
+failure is otherwise silent. ADR-0012's actual restore verification, the
+quarterly manual drill, stays outside this design: a human reading a restored
+file is not an event a check-in service can witness.
 
 This **amends ADR-0004 on the mechanism of its third category, not on its
 existence**. The count stays at five, and detection moves outside the machine,
@@ -140,21 +156,49 @@ which is the same property the witness was brought in for.
 
 ## Routing, and where Alertmanager runs
 
-**One route, one topic, all five categories**, with ntfy's `priority` and `tags`
-derived from alert labels by the templated payload. A side effect worth
-recording: ADR-0017 accepted that "the notification alone does not say which
-sensor spoke" when it merged CPU and NVMe over-temperature into one category. A
-templated payload refunds that for free, because the sensor label lands in the
-title.
+**One route, one topic, four of the five categories**, with ntfy's `priority`
+and `tags` derived from alert labels by the templated payload, and
+`send_resolved: false`: an alert here is defined as demanding a human gesture,
+and the operator acting on it already knows when it is fixed, so a resolved
+notification would spend the same channel to confirm the obvious.
 
-**Alertmanager runs in-cluster**, described by Flux like everything else.
-ADR-0004 left this open, writing "systemd `MemoryMax=` or a container memory
-limit" without choosing between them, and this ADR has to choose because the
+**Node unreachable is the one category this route cannot carry, structurally.**
+Alertmanager runs in-cluster on the machine that alert watches, so if the node
+is truly unreachable, the Alertmanager meant to post the notification is
+unreachable with it, the same blind spot the Watchdog exists to close. The
+category is not dropped; its failure mode is caught by the witness stood up
+below, for the same reason a dead `node_exporter` is. The other four (disk near
+full, backup missed its RPO window, certificate expiring, thermal) route here
+without that problem, since each can still be evaluated and posted while the
+node itself answers.
+
+That trade costs latency, named rather than left implicit. The other four
+categories notify as soon as vmalert's rule fires, seconds to minutes.
+Node-unreachable notifies only once the witness's own cadence below expires,
+up to about an hour, since it depends on a heartbeat's absence rather than a
+rule firing. The event that needed the fastest alert gets the slowest one,
+which is the cost of the only mechanism that can see it happen at all.
+
+A side effect worth recording: ADR-0017 accepted that "the notification alone
+does not say which sensor spoke" when it merged CPU and NVMe over-temperature
+into one category. A templated payload refunds that for free, because the
+sensor label lands in the title.
+
+**Alertmanager and vmalert both run in-cluster**, described by Flux like
+everything else. ADR-0004 left the mechanism open, writing "systemd
+`MemoryMax=` or a container memory limit" without choosing between them, and
+counted vmalert and Alertmanager as one 256 MiB row. This ADR settles that
+whole row, not half of it. Alertmanager has to be in-cluster because the
 credentials depend on it: ADR-0009's only accepted mechanism is SOPS+age
-decrypted by Flux's kustomize-controller, which is **cluster-only**. An
+decrypted by Flux's kustomize-controller, which is **cluster-only**, and an
 Alertmanager on the host would need a host-side secret mechanism that no
 accepted ADR describes, and inventing one to deliver a topic name would be a
-large decision made for a small reason.
+large decision made for a small reason. vmalert follows for a plainer reason:
+it already queries VictoriaMetrics's in-cluster HTTP API and needs no
+credential of its own, so splitting it onto the host would buy nothing while
+turning ADR-0004's one 256 MiB limit into two. The combined cap is therefore a
+single in-cluster memory limit, not a systemd unit for one and a container for
+the other.
 
 Both credentials, the **ntfy topic** and the **Healthchecks ping URLs**, are
 therefore SOPS+age secrets reconciled by Flux, the same pattern ADR-0011 already
@@ -181,12 +225,13 @@ written plainly:
   is a URL and a topic in one pull request, because the mechanism is a POST.
 - **If Healthchecks stops being free or disappears**, the witness is gone and
   the platform returns to exactly the hole this ADR closes: the chain can die in
-  silence, and the daily dump and monthly restore verification lose their
-  detector with it. The replacement is another ping URL in one pull request.
+  silence, and the daily dump and monthly `restic check` lose their detector
+  with it. The replacement is another ping URL in one pull request.
 - **ntfy's public instance publishes no figure for its daily message quota**,
-  only that a per-visitor daily limit exists. Five alert categories and one
-  witness are nowhere near any plausible bound, but the bound itself is
-  undocumented, so it cannot be checked in advance.
+  only that a per-visitor daily limit exists. The four alert categories and
+  the witness's three independently-scheduled checks, seven sources able to
+  post to the same topic, are nowhere near any plausible bound, but the bound
+  itself is undocumented, so it cannot be checked in advance.
 
 Portability is the reason both were chosen, not a consolation. Neither is
 holding state this platform depends on; each is one outbound HTTP call.
@@ -195,20 +240,23 @@ holding state this platform depends on; each is one outbound HTTP call.
 
 **ntfy.sh is the receiver.** Alertmanager posts to it from a single
 `webhook_config` with a templated `payload` rendering ntfy's JSON publish
-schema, needing no adapter and no extra process. One route, one topic, all five
-categories, priority and tags carried from alert labels. The topic is a secret.
+schema, needing no adapter and no extra process. One route, one topic, four of
+the five categories (node unreachable excepted, see below), priority and tags
+carried from alert labels, `send_resolved: false`. The topic is a secret.
 
 **Healthchecks.io, free tier, is the witness**, notifying through its native
 ntfy integration onto the same topic. It holds three checks: the Watchdog
-heartbeat, the daily PostgreSQL dump, and the monthly restore verification. Ping
+heartbeat, the daily PostgreSQL dump, and the monthly `restic check`. Ping
 period 15 minutes, grace 45 minutes.
 
 **The Watchdog's expression is anchored on a `node_exporter` metric** rather
 than on `vector(1)`, so a dead collector silences the heartbeat and is caught
-from outside, closing ADR-0017's dependency without a sixth alert category.
+from outside, closing ADR-0017's dependency without a sixth alert category. The
+same mechanism catches node unreachable, the one alert category the receiver
+itself cannot carry.
 
-**Alertmanager runs in-cluster.** Both credentials are SOPS+age secrets
-reconciled by Flux; nothing touches the host.
+**Alertmanager and vmalert run in-cluster.** Both of Alertmanager's credentials
+are SOPS+age secrets reconciled by Flux; nothing touches the host.
 
 Exact PromQL, the payload template and the Alertmanager route tree are
 implementation, as ADR-0004 and ADR-0017 both established for their own rules;
@@ -293,12 +341,15 @@ textfile collector ADR-0017 had just refused.
   this ADR changes the mechanism of its third category, which now reports by
   silence to an external check-in service rather than by a rule evaluated
   against a metric nothing publishes.
-- **ADR-0017's dependency is closed.** Its five categories have a destination,
-  and a dead `node_exporter` is now caught from outside the machine.
+- **ADR-0017's dependency is closed.** Four of its five categories reach a
+  destination through the receiver; the fifth, node unreachable, is instead
+  caught by the witness, for the same reason a dead `node_exporter` is now
+  caught from outside the machine.
 - **ADR-0004's open question about where the observability stack runs is
-  settled for Alertmanager**: in-cluster, under Flux. The other three
-  components are not decided here, and the split's cgroup enforcement is
-  unchanged either way.
+  settled for the vmalert-plus-Alertmanager row**: both in-cluster, under
+  Flux, sharing the one 256 MiB limit that row was budgeted. The other three
+  components (VictoriaMetrics, VictoriaLogs, Grafana) are not decided here,
+  and the split's cgroup enforcement is unchanged either way.
 - **Alertmanager must be 0.32.0 or newer.** The adapter-free path depends on
   webhook payload templating, which does not exist before that release. Pinning
   it is the installing ticket's job; running an older Alertmanager silently
