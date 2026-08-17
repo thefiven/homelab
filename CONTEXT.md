@@ -36,6 +36,32 @@ Human-in-the-loop by nature: it needs the real machine, so CI can never run
 it. "CI is green" and "the platform verify passed on node1" are never the
 same claim.
 
+### Alerting
+
+The first two are routinely used as two intensities of one word. They are not:
+the boundary is action, not severity. See
+[ADR-0004](./docs/adr/0004-victoriametrics-victorialogs-observability.md) and
+[ADR-0018](./docs/adr/0018-ntfy-receiver-healthchecks-witness.md).
+
+**Alert**:
+A notification that demands a human gesture, costs something if ignored, and
+will not resolve itself. It pushes to the phone. The set is closed at five
+categories and grows only by an ADR.
+_Avoid_: warning, notification
+
+**Signal**:
+Everything else the observability stack produces. It lives in Grafana and never
+notifies. A signal is read when someone thinks to look, which is why no failure
+that needs a gesture is left as one.
+_Avoid_: low-priority alert, soft alert
+
+**Witness**:
+The external service that notices this platform's silence. It is not a probe:
+nothing is asked of the platform, the platform speaks on a schedule and the
+**absence** of speech is the alarm. Its whole value is being somewhere that
+does not die with the machine it watches.
+_Avoid_: monitor, uptime check
+
 ### The resource budget
 
 The first three terms below are routinely conflated and mean different things.

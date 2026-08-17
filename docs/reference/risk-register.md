@@ -157,3 +157,26 @@ reads, sees that only second-hand and late; the GPU itself is not in
 **Revisits when:** covering it would need the textfile collector ADR-0004
 does not have, plus new scripts to test, for a component the alert's watched
 circuit does not cool. Not scheduled.
+
+## 10. Every alert depends on two free third-party tiers, on one channel
+
+All five alert categories leave by a single route to a public ntfy.sh topic,
+and the dead-man witness that proves the chain is alive is a free
+Healthchecks.io account. There is no fallback channel: a second one was
+considered and refused, on the grounds that a duplicated alert is a less
+meaningful alert and one of the two ends up ignored. If ntfy stops being free
+or disappears, nothing reaches the phone; if Healthchecks does, the chain can
+die in silence again and the daily dump and monthly restore verification lose
+their detector with it. ntfy's public instance also publishes no figure for
+its daily message quota, only that a per-visitor limit exists, so the bound
+cannot be checked in advance.
+
+Neither can be replaced by a self-hosted equivalent: both would die with the
+machine they watch, at the exact moment the alert matters. That is why the
+third-party dependency is structural here rather than a shortcut.
+
+**Accepted by:** ADR-0018.
+**Revisits when:** either free tier changes terms. The mitigation is already
+banked rather than scheduled: both mechanisms are one outbound POST, so
+swapping either is a URL in one pull request, and neither holds state this
+platform depends on.
