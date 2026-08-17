@@ -1,0 +1,55 @@
+# Role `node-exporter`: publish host metrics for the thermal alert
+# (ADR-0017) and the disk-near-full alert (ADR-0004), neither of which had a
+# metric source before this role existed.
+#
+# The Ubuntu package, not a hand-rolled systemd unit or a GitHub-release
+# download: `prometheus-node-exporter` ships its own systemd unit and
+# already runs as a dedicated `prometheus` user, the same "reuse the distro"
+# choice the `tailscale`/`zfs`/`nfs-client` roles make. Its default
+# collector set — no `ARGS` needed — already includes `hwmon` (`k10temp`,
+# NVMe `Composite`) and `filesystem`, which is every signal ADR-0017 and
+# ADR-0004 need; nothing here has to enable a collector by hand.
+# `--tags verify` proving the exporter is actually scraped is #171's
+# platform-invariant ticket, not this one.
+
+- name: Install the node_exporter package
+  ansible.builtin.apt:
+    name: prometheus-node-exporter
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    # Recommends pulls in prometheus-node-exporter-collectors: cron-driven
+    # textfile collectors (smartmon, apt) nothing here asked for. ADR-0017
+    # rejected home-made textfile-collector scripts outright; installing the
+    # package that adds them by default would reopen that on the sly.
+    install_recommends: false
+
+# ADR-0017: "capped by MemoryMax= in keeping with ADR-0004's rule that
+# every limit is external". A drop-in override, not an edit to the
+# package's own unit file, so a package upgrade never silently drops the
+# cap back to unbounded — the same reasoning the `zfs` role applies to
+# /etc/modprobe.d/zfs.conf rather than editing a shipped file in place.
+- name: Create the node_exporter systemd override directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/prometheus-node-exporter.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Cap node_exporter's memory with a systemd override
+  ansible.builtin.template:
+    src: memory-cap.conf.j2
+    dest: /etc/systemd/system/prometheus-node-exporter.service.d/memory-cap.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload the systemd daemon
+    - Restart node_exporter
+
+- name: Enable and start the node_exporter service
+  ansible.builtin.systemd_service:
+    name: prometheus-node-exporter
+    enabled: true
+    state: started

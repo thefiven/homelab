@@ -12,6 +12,7 @@
   become: true
   roles:
     - base        # packages, SSH, chrony, unattended-upgrades, GRUB, ESP/ZFS mount-order fix
+    - node-exporter # host metrics for the thermal/disk alerts (ADR-0017), MemoryMax-capped
     - zfs         # state-pool creation, ARC cap, scheduled trim
     - tailscale   # enrollment
     - nvidia      # driver + nvidia-container-toolkit (#68), before k3s so the runtime exists at k3s's first start
