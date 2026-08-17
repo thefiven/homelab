@@ -4,19 +4,31 @@
 # Image pinned to a manifest-list digest for linux/amd64, resolved from
 # prom/alertmanager:v0.34.0 (latest stable release, 2026-08-16) via the
 # Docker Hub registry API. ADR-0018 requires >= 0.32.0 for the webhook
-# payload templating the future ntfy receiver needs (#170); 0.34.0 clears
-# that floor with margin.
+# payload templating the ntfy receiver uses (alertmanager-configmap.yaml,
+# #170); 0.34.0 clears that floor with margin.
 #
 # No PVC: `--storage.path` holds silences and the notification log.
-# ponytail: an emptyDir loses both across a pod restart or reschedule,
-# acceptable today since no route/receiver exists yet to have state worth
-# keeping (#168-170 still land the real config). Give it a ZFS dataset and
-# local PV, same pattern as victoriametrics-pv.yaml, if losing an
-# in-progress silence during a restart ever actually costs something.
+# ponytail: an emptyDir loses both across a pod restart or reschedule.
+# Give it a ZFS dataset and local PV, same pattern as
+# victoriametrics-pv.yaml, if losing an in-progress silence during a
+# restart ever actually costs something.
 #
 # Memory: 128 MiB, the other half of ADR-0004's combined 256 MiB
 # vmalert+Alertmanager row (vmalert-deployment.yaml carries the same
-# ponytail note on the split itself).
+# ponytail note on the split itself). The init container below runs to
+# completion before the main container starts, never alongside it, so it
+# adds nothing to that steady-state figure.
+#
+# `ntfy-url` init container: builds `https://ntfy.sh/<topic>` from the
+# ntfy-topic secret into the shared `generated` emptyDir, since Alertmanager
+# config has no way to read a secret into the `payload` template (see
+# alertmanager-configmap.yaml) and `url_file` needs the full URL, not just
+# the topic. Reuses this same image rather than adding a new one to pin:
+# prom/alertmanager is built FROM quay.io/prometheus/busybox, which carries
+# `sh`, `cat` and `printf` - already-installed tools, not a new dependency.
+# The Healthchecks ping URL needs no such step: healthchecks-pings' secret
+# values are already complete URLs, so the main container's `url_file`
+# reads that mounted secret directly.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -32,6 +44,24 @@ spec:
       labels:
         app: alertmanager
     spec:
+      initContainers:
+        - name: ntfy-url
+          image: prom/alertmanager:v0.34.0@sha256:268d4bf0e4bc0fe6dbdef6a59ce81a2918c88458bf8edf7dd0572ad372a093e6
+          command:
+            - sh
+            - -c
+            - printf 'https://ntfy.sh/%s' "$(cat /secrets/ntfy-topic/NTFY_TOPIC)" > /generated/ntfy-url
+          volumeMounts:
+            - name: ntfy-topic
+              mountPath: /secrets/ntfy-topic
+              readOnly: true
+            - name: generated
+              mountPath: /generated
+          resources:
+            requests:
+              memory: 16Mi
+            limits:
+              memory: 16Mi
       containers:
         - name: alertmanager
           image: prom/alertmanager:v0.34.0@sha256:268d4bf0e4bc0fe6dbdef6a59ce81a2918c88458bf8edf7dd0572ad372a093e6
@@ -58,6 +88,12 @@ spec:
               mountPath: /etc/alertmanager
             - name: storage
               mountPath: /alertmanager
+            - name: generated
+              mountPath: /generated
+              readOnly: true
+            - name: healthchecks-pings
+              mountPath: /secrets/healthchecks-pings
+              readOnly: true
           resources:
             requests:
               memory: 128Mi
@@ -69,3 +105,11 @@ spec:
             name: alertmanager-config
         - name: storage
           emptyDir: {}
+        - name: generated
+          emptyDir: {}
+        - name: ntfy-topic
+          secret:
+            secretName: ntfy-topic
+        - name: healthchecks-pings
+          secret:
+            secretName: healthchecks-pings

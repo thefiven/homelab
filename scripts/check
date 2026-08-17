@@ -13,3 +13,10 @@ DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # needing a live cluster. SOPS ciphertext still parses as valid YAML, so
 # this doesn't need a decryption key.
 kubectl kustomize "$DIR/../workloads/immich" >/dev/null
+
+# Same for workloads/observability (#160/#170). Its two SOPS secrets
+# (ntfy topic, Healthchecks ping URLs) aren't committed yet -
+# scripts/observability-secrets-setup is a human-only wizard (#169) - and
+# this build has to keep passing without them: the Deployment only
+# references their Secret names in a volume, which kustomize never resolves.
+kubectl kustomize "$DIR/../workloads/observability" >/dev/null

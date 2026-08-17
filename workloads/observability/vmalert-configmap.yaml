@@ -2,17 +2,22 @@
 # categories plus ADR-0017's thermal, and the inhibition wiring that lives
 # in alertmanager-configmap.yaml's inhibit_rules, not here).
 #
-# Four rule groups, not five. "Backup missed its RPO window" has no rule
-# in this file: ADR-0018 amends ADR-0004 on that category's *mechanism*,
-# not its existence ("This amends ADR-0004 on the mechanism of its third
-# category ... which now reports by silence to an external check-in
-# service rather than by a rule evaluated against a metric nothing
+# Four category rule groups, not five. "Backup missed its RPO window" has
+# no rule in this file: ADR-0018 amends ADR-0004 on that category's
+# *mechanism*, not its existence ("This amends ADR-0004 on the mechanism of
+# its third category ... which now reports by silence to an external
+# check-in service rather than by a rule evaluated against a metric nothing
 # publishes"). A restic dump has no Prometheus metric to alert on and
 # ADR-0017 already refused the textfile collector that would have
 # manufactured one; the category is instead a Healthchecks.io check pinged
 # directly by the backup CronJob, wired in #169 (secret) and #170
 # (kustomize check + wire secrets). Writing a dormant PromQL rule for it
 # here would invent a metric name nothing will ever export.
+#
+# A fifth group, watchdog, is not a category at all: it is the heartbeat
+# ADR-0018 anchors on node_exporter rather than on `vector(1)`, carrying
+# both the Healthchecks witness and node-unreachable's own notification
+# (#170).
 #
 # node-exporter's default collector set (ansible/roles/node-exporter)
 # publishes every metric below: `up`, `node_filesystem_*` (filesystem
@@ -133,3 +138,26 @@ data:
               description: >-
                 traefik_tls_certs_not_after reports less than 14 days of
                 validity remaining for {{ $labels.instance }}.
+
+      # ADR-0018's heartbeat. `up{job="node-exporter"} == 1` rather than
+      # `vector(1)`: the moment node_exporter stops being scraped (crashed
+      # collector, dead node, dead k3s), this series stops existing and the
+      # alert stops firing right along with it, the same way NodeUnreachable
+      # above does. Alertmanager then stops posting to Healthchecks'
+      # Watchdog ping URL, and Healthchecks' own grace-period silence is the
+      # alarm - the one path left for node-unreachable's notification, since
+      # Alertmanager can't post about its own node being down (ADR-0018).
+      # No `for:`: this alert is meant to be true continuously while
+      # healthy, not delayed like the others.
+      - name: watchdog
+        rules:
+          - alert: Watchdog
+            expr: up{job="node-exporter"} == 1
+            labels:
+              category: watchdog
+            annotations:
+              summary: "Heartbeat: node_exporter is being scraped"
+              description: >-
+                Always-firing while healthy, per ADR-0018 - its Alertmanager
+                route pings Healthchecks.io every 15 minutes, and the
+                witness raises the alarm on silence, not on this firing.
