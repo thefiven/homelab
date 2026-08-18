@@ -1,0 +1,13 @@
+# Flux's `workloads` Kustomization (clusters/homelab/workloads.yaml) has no
+# kustomization.yaml of its own at ./workloads, so kustomize-controller
+# generates one on the fly. That generator's own directory walk (fluxcd/pkg
+# kustomize_generator.go, scanManifests) stops descending as soon as it
+# finds a subdirectory carrying its own kustomization.yaml file, adding the
+# whole directory as one resource entry instead of flattening every
+# manifest inside it (#133, same reasoning as workloads/immich/
+# kustomization.yaml).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - secrets/restic-repository.sops.yaml
