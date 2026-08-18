@@ -18,7 +18,22 @@
     - nvidia      # driver + nvidia-container-toolkit (#68), before k3s so the runtime exists at k3s's first start
     - k3s         # server/agent mode (#70)
     - gitops      # Flux health + sops-age secret (#115), needs a running k3s
-    - nfs-client  # NAS mounts for Immich originals (#69)
+    # `vars:` maps the role's generic `nfs_client_nas_export_base` from a
+    # role-specific source name (`nfs_client_immich_nas_export_base`)
+    # instead of leaving the role read a bare `nfs_client_nas_export_base`
+    # straight out of extra-vars. Extra-vars (`-e @path`, ADR-0015) has the
+    # single highest precedence in Ansible and is a flat, once-per-run
+    # namespace: a bare `nfs_client_nas_export_base` key set there is one
+    # value for the entire play, unconditionally shadowing this role's own
+    # `vars:` override below on its second invocation, no matter which
+    # runs first. Verified against node1 (161): a bare name here mounted
+    # the restic export at the Immich path and failed with "No such file
+    # or directory". Each invocation naming its own source var, mapped in
+    # locally, is what actually lets `-e @path` and a two-invocation role
+    # coexist.
+    - role: nfs-client  # NAS mounts for Immich originals (#69)
+      vars:
+        nfs_client_nas_export_base: "{{ nfs_client_immich_nas_export_base }}"
     # Second invocation of the same role, mounting a distinct NAS export for
     # restic (#172; #161's Implementation Decisions: "an NFS path on the NAS
     # distinct from the Immich originals/derivatives exports"). Ansible runs
@@ -34,7 +49,7 @@
     # UID. nfs_client_restic_nas_export_base is a real designator
     # (ADR-0015): set it to that export's parent (e.g. "/volume1") in the
     # gitignored ansible/host_vars/node1_secrets.yml, mirroring
-    # nfs_client_nas_export_base above.
+    # nfs_client_immich_nas_export_base above.
     #
     # What restic actually inits inside this mount (a bare repo at the root,
     # a subdirectory) is the daily-job ticket's call (161-03), not this
