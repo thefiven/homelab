@@ -1,0 +1,23 @@
+# Flux's `workloads` Kustomization (clusters/homelab/workloads.yaml) has no
+# kustomization.yaml of its own at ./workloads, so kustomize-controller
+# generates one on the fly. That generator's own directory walk (fluxcd/pkg
+# kustomize_generator.go, scanManifests) stops descending as soon as it
+# finds a subdirectory carrying its own kustomization.yaml file, adding the
+# whole directory as one resource entry instead of flattening every
+# manifest inside it (#133, same reasoning as workloads/backup/
+# kustomization.yaml).
+#
+# Only namespace.yaml so far (#179): the Cloudflare API token and Tunnel
+# token secrets need a scoped token and a Tunnel created by hand in the
+# Cloudflare dashboard (scripts/ingress-secrets-setup), so unlike
+# workloads/backup's restic password there is nothing to generate locally
+# yet. Add secrets/cloudflare-api-token.sops.yaml and
+# secrets/cloudflare-tunnel-token.sops.yaml here once that wizard has been
+# run and both files exist (same two-step order workloads/observability's
+# ntfy/Healthchecks secrets followed: #169 shipped the wizard, a later
+# commit ran it and wired the result in), a resources entry pointing at a
+# file that doesn't exist yet breaks `kubectl kustomize`.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
