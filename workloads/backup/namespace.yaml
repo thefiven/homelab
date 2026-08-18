@@ -1,0 +1,10 @@
+# kustomization.yaml (#133's pattern, reused here) lists every manifest in
+# this directory as one Kustomization, but ordering within a Kustomization's
+# `resources` list isn't a dependency graph: kustomize-controller can apply
+# a namespaced object below before this Namespace, so it has to exist
+# regardless, or that apply fails with "namespaces \"backup\" not found" on
+# every reconcile (same reasoning as workloads/immich/namespace.yaml).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: backup
