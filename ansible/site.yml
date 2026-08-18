@@ -19,3 +19,29 @@
     - k3s         # server/agent mode (#70)
     - gitops      # Flux health + sops-age secret (#115), needs a running k3s
     - nfs-client  # NAS mounts for Immich originals (#69)
+    # Second invocation of the same role, mounting a distinct NAS export for
+    # restic (#172; #161's Implementation Decisions: "an NFS path on the NAS
+    # distinct from the Immich originals/derivatives exports"). Ansible runs
+    # a role again when its params differ from an earlier invocation, so
+    # this needs no change to the role itself: nfs-client's assert/mount/
+    # verify tasks are already generic over any host/export_base/local_root/
+    # mounts combination.
+    #
+    # No new NAS-side export to provision here: docs/reference/hardware.md
+    # (archived) already names `/volume1/backup` as an existing, dedicated
+    # export, synchronous specifically so a `pg_dump` never returns before
+    # its file is on disk (ADR-0012), squash "No mapping" so root keeps its
+    # UID. nfs_client_restic_nas_export_base is a real designator
+    # (ADR-0015): set it to that export's parent (e.g. "/volume1") in the
+    # gitignored ansible/host_vars/node1_secrets.yml, mirroring
+    # nfs_client_nas_export_base above.
+    #
+    # What restic actually inits inside this mount (a bare repo at the root,
+    # a subdirectory) is the daily-job ticket's call (161-03), not this
+    # one's: this role only needs to get the export mounted.
+    - role: nfs-client
+      vars:
+        nfs_client_local_root: /srv
+        nfs_client_nas_export_base: "{{ nfs_client_restic_nas_export_base }}"
+        nfs_client_mounts:
+          - backup

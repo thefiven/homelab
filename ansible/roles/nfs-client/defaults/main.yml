@@ -1,4 +1,7 @@
-# Defaults for the `nfs-client` role.
+# Defaults for the `nfs-client` role. These are the Immich originals'
+# defaults specifically: `ansible/site.yml` invokes this role a second
+# time with overrides for the restic backup export (#172), which needs
+# none of these values changed.
 #
 # `nfs_client_nas_host` and `nfs_client_nas_export_base` are deliberately
 # absent, same reasoning as `zfs_state_disk_serial` and
