@@ -12,9 +12,12 @@
       - nfs_client_nas_export_base is defined
       - nfs_client_nas_export_base | string | length > 0
     fail_msg: >-
-      nfs_client_nas_host and nfs_client_nas_export_base are not set. This
-      role never ships a default for either (see defaults/main.yml); set
-      them in inventory or host_vars before running against a real host.
+      nfs_client_nas_host and nfs_client_nas_export_base are not set for
+      this invocation (nfs_client_local_root={{ nfs_client_local_root }},
+      nfs_client_mounts={{ nfs_client_mounts }}). This role never ships a
+      default for either (see defaults/main.yml); set the invocation's own
+      source var in host_vars, mapped in via this role's `vars:` in
+      ansible/site.yml.
   tags: always
 
 - name: Install the NFS client packages

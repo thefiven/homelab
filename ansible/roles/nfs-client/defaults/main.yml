@@ -7,14 +7,26 @@
 # absent, same reasoning as `zfs_state_disk_serial` and
 # `tailscale_authkey`: a working-looking placeholder here is more dangerous
 # than an assertion failure, since a wrong guess would mount the wrong
-# export, or silently mount nothing. Set both in inventory or host_vars
-# before running against a real host:
+# export, or silently mount nothing.
 #
-#   nfs_client_nas_host: the NAS's address (LAN or Tailscale hostname)
+#   nfs_client_nas_host: the NAS's address (LAN or Tailscale hostname),
+#     shared by every invocation of this role, set once in host_vars.
 #   nfs_client_nas_export_base: the NAS export path that upload/ and
 #     library/ live under as subfolders (ADR-0010: "upload/ and library/
 #     subfolders are NFS-mounted onto the NAS as a mount over a subpath"),
 #     e.g. /volume1/immich on a Synology.
+#
+# Never set `nfs_client_nas_export_base` itself under its bare name in a
+# gitignored `host_vars/*_secrets.yml` — that file is passed whole via
+# `-e @path` (ADR-0015), and extra-vars has the single highest precedence
+# in Ansible, a flat namespace for the whole run: a bare value there
+# unconditionally shadows every invocation's own `vars:` override,
+# regardless of invocation order (#161, the exact bug this once caused).
+# Each invocation in `ansible/site.yml` instead reads its own
+# invocation-specific source var (`nfs_client_immich_nas_export_base`,
+# `nfs_client_restic_nas_export_base`) and maps it into this role's
+# `nfs_client_nas_export_base` locally via `vars:` — set the
+# invocation-specific name in host_vars, never the bare one above.
 
 # Local root both mounts land under. Becomes Immich's UPLOAD_LOCATION once
 # the workload that consumes it exists (not this role's concern); thumbs/,
