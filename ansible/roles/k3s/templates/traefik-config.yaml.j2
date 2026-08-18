@@ -1,0 +1,59 @@
+---
+# Templated by the `k3s` role (#178, ADR-0011). k3s's own bundled Traefik
+# AddOn is customized through its documented HelmChartConfig mechanism, not
+# Flux: Traefik stays outside GitOps (docs/reference/platform-state.md's
+# "Known gap: three components outside GitOps"), same as ADR-0011's own
+# Consequences section left this configuration for "the installing ticket".
+# metadata.name/namespace must match the traefik HelmChart k3s itself
+# creates (kube-system/traefik) for this to be picked up as an override
+# rather than a separate, inert chart.
+#
+# k3s auto-applies any manifest dropped in its server manifests directory;
+# this file must never be named traefik.yaml, the AddOn's own manifest that
+# k3s overwrites with defaults on every start.
+#
+# The wildcard domain lives under ports.websecure.http.tls, not under
+# certificatesResolvers.cloudflare.acme: `domains` isn't a field of the
+# resolver's own static acme config (verified against traefik-helm-chart's
+# values.yaml and Traefik's own acme reference docs, which only document
+# `domains` per-router or per-entrypoint): setting it at the entrypoint
+# makes it Traefik's default for every router on websecure that doesn't
+# name its own domains, which is what pre-provisions the wildcard cert at
+# startup instead of waiting for the first IngressRoute to ask for one.
+#
+# ponytail: no persistence for /data/acme.json. #19 (storage layout) hasn't
+# settled a StorageClass yet, and this role already disables the
+# local-storage AddOn (defaults/main.yml). Traefik re-requests the wildcard
+# cert from scratch on every pod restart until then, which risks Let's
+# Encrypt's 5-duplicate-certificate/week rate limit if restarts get
+# frequent. Add `persistence.enabled: true` + a storageClass once #19 gives
+# one to point at.
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    env:
+      - name: {{ k3s_traefik_cloudflare_secret_key }}
+        valueFrom:
+          secretKeyRef:
+            name: {{ k3s_traefik_cloudflare_secret_name }}
+            key: {{ k3s_traefik_cloudflare_secret_key }}
+    certificatesResolvers:
+      cloudflare:
+        acme:
+          email: "{{ k3s_traefik_acme_email }}"
+          dnsChallenge:
+            provider: cloudflare
+          storage: /data/acme.json
+    ports:
+      websecure:
+        http:
+          tls:
+            certResolver: cloudflare
+            domains:
+              - main: "{{ k3s_traefik_domain }}"
+                sans:
+                  - "*.{{ k3s_traefik_domain }}"
