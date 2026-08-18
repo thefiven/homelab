@@ -20,3 +20,9 @@ kubectl kustomize "$DIR/../workloads/immich" >/dev/null
 # this build has to keep passing without them: the Deployment only
 # references their Secret names in a volume, which kustomize never resolves.
 kubectl kustomize "$DIR/../workloads/observability" >/dev/null
+
+# Same for workloads/backup (#161-05): the restic postgres-dump and
+# restic-check CronJobs, and their three SOPS secrets (repository password,
+# duplicated Postgres credentials, duplicated Healthchecks pings - 161-02
+# through 161-04).
+kubectl kustomize "$DIR/../workloads/backup" >/dev/null
