@@ -50,3 +50,36 @@ k3s_server_port: 6443
 # (#131, ADR-0015). Its value is always inventory_hostname, the generic
 # Ansible alias (node1, node2, ...).
 k3s_node_label_key: homelab.local/node
+
+# Server mode only (#178, ADR-0011): the public wildcard hostname Traefik's
+# built-in ACME resolver requests via Cloudflare DNS-01 (main + `*.<domain>`
+# SAN), and the contact address Let's Encrypt registers the ACME account
+# under (a required field of every certificatesResolvers.<name>.acme block,
+# per Traefik's own reference docs). ADR-0011's own Consequences section
+# leaves "the domain name(s) themselves ... registrar, actual purchase" to a
+# future ticket, so this role never guesses either value: unlike
+# k3s_role/k3s_server_node above, an unset value here isn't a broken role
+# (tasks/main.yml skips templating the Traefik HelmChartConfig entirely
+# until both are set, the same "not bootstrapped yet, skip quietly" shape
+# the `gitops` role's sops-age task already uses), so the rest of this
+# role's tasks (and every role after it in site.yml) still run against
+# node1 in the meantime. Set both in inventory or host_vars once a real
+# domain and contact address exist.
+# k3s_traefik_domain:
+# k3s_traefik_acme_email:
+
+# Server mode only (#178): name/key of the Kubernetes Secret (kube-system,
+# SOPS+age, Flux-reconciled per #179) holding the scoped Cloudflare API
+# token Traefik's DNS-01 solver reads as an env var. The key doubles as the
+# env var name lego's Cloudflare provider expects
+# (go-acme.github.io/lego/dns/cloudflare), matching this repo's existing
+# secret convention (stringData key == the consumer's env var name, e.g.
+# workloads/backup/secrets/restic-repository.sops.yaml's RESTIC_PASSWORD).
+# #179 must scope that single token with both Zone:DNS:Edit and
+# Zone:Zone:Read on the target zone: lego's Cloudflare provider needs the
+# latter to resolve the domain to a Zone ID, and this role only ever wires
+# one token (CF_DNS_API_TOKEN), not lego's optional two-token split
+# (CF_ZONE_API_TOKEN) — a DNS:Edit-only token fails the challenge at the
+# zone-lookup step, not the edit step.
+k3s_traefik_cloudflare_secret_name: cloudflare-api-token
+k3s_traefik_cloudflare_secret_key: CF_DNS_API_TOKEN
