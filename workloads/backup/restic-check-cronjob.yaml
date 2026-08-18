@@ -1,0 +1,95 @@
+# 161-04: the monthly automated `restic check` ADR-0012's rehearsal schedule
+# requires, verifying repository integrity independently of the quarterly
+# manual restore drill (161-06, a runbook, not automation).
+#
+# Same init-container-then-ping shape as postgres-dump-cronjob.yaml (161-03)
+# and the same reasoning: `check` is an initContainer, `ping` is the pod's
+# one regular container, so Kubernetes only pings Healthchecks.io once the
+# check has actually exited 0 (ADR-0018: "the CronJob pings its own check
+# and its silence is the alert"), no wrapper script needed.
+#
+# Only one initContainer here, unlike the dump job's two: this job never
+# touches Postgres, so there's no second, differently-pinned image to copy a
+# binary out of. `restic/restic` already carries everything `restic check`
+# needs.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: restic-check
+  namespace: backup
+spec:
+  # 1st of the month, 04:00 UTC: an hour after the daily dump's 03:00 run,
+  # so `check` isn't routinely reading mid-write. `concurrencyPolicy:
+  # Forbid` only guards each CronJob against itself, not against the other
+  # one, but restic's own locking (both `backup` and `check` take
+  # non-exclusive locks, safe to hold in parallel) makes an occasional
+  # overlap harmless rather than something this schedule has to prevent.
+  # Otherwise arbitrary, same reasoning as postgres-dump-cronjob.yaml's
+  # explicit `timeZone`.
+  schedule: "0 4 1 * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: Never
+          # Same NAS export, same node, same reasoning as
+          # postgres-dump-cronjob.yaml.
+          nodeSelector:
+            homelab.local/node: node1
+          initContainers:
+            # Plain `restic check` (no `--read-data`): verifies the
+            # repository's structure and index consistency, the
+            # "near-zero human time" integrity check ADR-0012's rehearsal
+            # schedule names. Reading and re-hashing every pack file is the
+            # quarterly manual drill's job (161-06), not this one's.
+            - name: check
+              image: restic/restic:0.19.1@sha256:136600b6ff6843d61d355f7f71f460a166429f35de6fd11b568fece3c9a4d510
+              args: [check]
+              env:
+                - name: RESTIC_REPOSITORY
+                  value: /srv/backup
+                - name: RESTIC_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: restic-repository
+                      key: RESTIC_PASSWORD
+              volumeMounts:
+                - name: backup-repo
+                  mountPath: /srv/backup
+              # A once-a-month structure/index walk over the repository
+              # metadata, not the ~20 GB of pack data itself: comfortably
+              # under the dump job's 512Mi burst allowance from the same
+              # ADR-0002 growth capacity.
+              resources:
+                requests:
+                  memory: 128Mi
+                limits:
+                  memory: 128Mi
+          containers:
+            # Only reached once `check` above has exited 0; see this file's
+            # header.
+            - name: ping
+              image: curlimages/curl:8.9.1@sha256:8addc281f0ea517409209f76832b6ddc2cabc3264feb1ebbec2a2521ffad24e4
+              command: [sh, -c, 'curl -fsS -m 10 --retry 3 "$RESTIC_CHECK_PING_URL"']
+              env:
+                - name: RESTIC_CHECK_PING_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: healthchecks-pings
+                      key: RESTIC_CHECK_PING_URL
+              resources:
+                requests:
+                  memory: 32Mi
+                limits:
+                  memory: 32Mi
+          volumes:
+            # Same hostPath as postgres-dump-cronjob.yaml: the nfs-client
+            # role's NAS export, mounted on node1 by the time this pod
+            # schedules there.
+            - name: backup-repo
+              hostPath:
+                path: /srv/backup
+                type: Directory
