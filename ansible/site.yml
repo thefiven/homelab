@@ -19,3 +19,19 @@
     - k3s         # server/agent mode (#70)
     - gitops      # Flux health + sops-age secret (#115), needs a running k3s
     - nfs-client  # NAS mounts for Immich originals (#69)
+    # Second invocation of the same role, mounting a distinct NAS export for
+    # the restic repository (#172, ADR-0012: "distinct from the Immich
+    # originals/derivatives exports"). Ansible runs a role again when its
+    # params differ from an earlier invocation, so this needs no change to
+    # the role itself: nfs-client's assert/mount/verify tasks are already
+    # generic over any host/export_base/local_root/mounts combination.
+    # nfs_client_restic_nas_export_base is a real designator (ADR-0015):
+    # set it in the gitignored ansible/host_vars/node1_secrets.yml, same as
+    # nfs_client_nas_export_base above but pointing at the NAS shared folder
+    # backing the restic repository, not the Immich originals.
+    - role: nfs-client
+      vars:
+        nfs_client_local_root: /srv/backup
+        nfs_client_nas_export_base: "{{ nfs_client_restic_nas_export_base }}"
+        nfs_client_mounts:
+          - restic

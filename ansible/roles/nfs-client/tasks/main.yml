@@ -1,6 +1,8 @@
-# Role `nfs-client`: mount ADR-0010's two NAS exports for Immich's
-# originals (upload/, library/) and validate each with an end-to-end
-# touch/read, as root and as a non-root UID (#69, #101).
+# Role `nfs-client`: mount NAS exports and validate each with an end-to-end
+# touch/read, as root and as a non-root UID (#69, #101). Generic over
+# host/export_base/local_root/mounts, so `ansible/site.yml` invokes it twice:
+# once (its defaults) for ADR-0010's Immich originals (upload/, library/),
+# once with overrides for ADR-0012's restic backup export (#172).
 
 - name: Assert that the NAS host and export base are set
   ansible.builtin.assert:
