@@ -24,7 +24,7 @@ it runs, not committed to a doc that immediately goes stale.
    role, `--tags verify`.
 5. **NAS mounts present, non-root write proven.** The Immich exports
    (`upload/`, `library/`, ADR-0010) and the restic backup export
-   (`restic/`, ADR-0012, #172) are mounted, and a non-root UID can write and
+   (`backup/`, ADR-0012, #172) are mounted, and a non-root UID can write and
    read back a file on each — not just root (#69). `nfs-client` role
    (invoked twice, once per export), `--tags verify`.
 6. **`sops-age` secret present.** The daily age identity is loaded into
