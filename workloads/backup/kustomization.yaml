@@ -11,3 +11,15 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - secrets/restic-repository.sops.yaml
+  # Postgres credentials and the Healthchecks.io ping URL, duplicated from
+  # workloads/immich/secrets/immich-postgres.sops.yaml and
+  # workloads/observability/secrets/healthchecks-pings.sops.yaml (161-03):
+  # a Kubernetes Secret is namespace-scoped and this cluster has no
+  # cross-namespace secret mechanism (no external-secrets, no reflector),
+  # so the daily-dump CronJob below needs its own copies rather than a
+  # secretKeyRef reaching into another namespace. Same plaintext values,
+  # re-encrypted for this namespace; #173 named this exact wiring decision
+  # as this ticket's to make, not its own.
+  - secrets/immich-postgres.sops.yaml
+  - secrets/healthchecks-pings.sops.yaml
+  - postgres-dump-cronjob.yaml
