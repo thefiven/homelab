@@ -1,0 +1,191 @@
+# 161-03: the daily `pg_dump | restic backup` job ADR-0012 requires.
+#
+# Shape: everything that has to happen before a Healthchecks.io ping is
+# owed sits in `initContainers`, and the ping itself is the pod's one
+# regular `container`. Kubernetes only starts a pod's `containers` once
+# every `initContainer` has exited 0, in order, and never starts them at
+# all if one fails; that ordering is exactly "ping only after a
+# successful backup, don't ping at all on failure" (ADR-0018: "the
+# CronJob pings its own check and its silence is the alert"), for free,
+# with no wrapper script coordinating two processes by hand.
+#
+# `install-restic` and `dump` are initContainers, not one merged step,
+# because the binary and the job that uses it come from two different,
+# separately-pinned images (below); `ping` is the only container that
+# actually needs to run once the dump exists.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-dump
+  namespace: backup
+spec:
+  # 03:00 UTC: off-peak, arbitrary otherwise. Nothing else on this
+  # platform runs on a schedule tight enough to collide with it. Explicit
+  # `timeZone` rather than relying on the default: unset, a CronJob's
+  # schedule is interpreted in kube-controller-manager's own local time
+  # zone (k8s docs), which is one more thing to know about this specific
+  # node rather than a fact the manifest states for itself.
+  schedule: "0 3 * * *"
+  timeZone: Etc/UTC
+  # Never run two dumps at once: a second `pg_dump` starting while the
+  # first is still writing gains nothing and only doubles the load on
+  # Postgres and the NFS export.
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      # A transient NFS or network hiccup gets two retries before the run
+      # is left to show up as failed; restic's own content-defined
+      # chunking makes a retried `restic backup` cheap; it re-hashes
+      # unchanged pack files instead of re-uploading them.
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: Never
+          # The NFS export this mounts (below) lives on node1 only, same
+          # reasoning as immich-server's hostPath volumes: a plain
+          # hostPath carries no nodeAffinity of its own, so the scheduler
+          # needs telling explicitly (ADR-0015, #131).
+          nodeSelector:
+            homelab.local/node: node1
+          initContainers:
+            # restic ships as one statically-linked Go binary (restic's
+            # own install docs: "statically linked and does not require
+            # any libraries"), so copying it out of its own (Alpine)
+            # image and running it inside the Debian-based postgres image
+            # below works with no libc mismatch, cheaper than teaching
+            # either image about the other's package manager.
+            - name: install-restic
+              image: restic/restic:0.19.1@sha256:136600b6ff6843d61d355f7f71f460a166429f35de6fd11b568fece3c9a4d510
+              command: [sh, -c, "cp /usr/bin/restic /restic-bin/restic && chmod +x /restic-bin/restic"]
+              volumeMounts:
+                - name: restic-bin
+                  mountPath: /restic-bin
+              resources:
+                requests:
+                  memory: 32Mi
+                limits:
+                  memory: 32Mi
+            # Same image and digest as postgres-statefulset.yaml, not a
+            # generic `postgres:14` client: this dump has to come from
+            # the exact build that also carries VectorChord/pgvecto.rs
+            # (immich-app/base-images' postgres/Dockerfile), so `pg_dump`
+            # knows how to represent those extensions instead of a
+            # version- and extension-matched guess.
+            #
+            # No `securityContext` here, and that's deliberate: this
+            # image sets no `USER`, so overriding its entrypoint (as
+            # `command` does) runs it as root, which is what the NAS
+            # export actually grants today: #211's own testing notes
+            # confirmed root write works and left non-root writes on this
+            # export as an open, NAS-side ACL question. Dropping to a
+            # non-root user here would silently break the write, not
+            # harden anything.
+            #
+            # `restic snapshots` is used as the init check because it's
+            # the cheapest command that fails cleanly against a
+            # not-yet-initialized repository; `restic init` runs only
+            # once, the first time this CronJob's dump initContainer ever
+            # sees this NAS export, then every later run finds the
+            # repository already there and skips straight to the backup,
+            # no separate one-off init Job or human gesture needed.
+            - name: dump
+              image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+              command:
+                - bash
+                - -c
+                - |
+                  set -euo pipefail
+                  export PATH="/restic-bin:$PATH"
+                  restic snapshots >/dev/null 2>&1 || restic init
+                  restic backup --stdin-filename immich-postgres.sql --stdin-from-command -- pg_dump
+              env:
+                # DNS name, not IP: immich's postgres-service.yaml headless
+                # Service resolves this across namespaces the same way it
+                # does inside immich itself.
+                - name: PGHOST
+                  value: immich-postgres.immich.svc.cluster.local
+                # libpq's own env vars (PGUSER/PGPASSWORD/PGDATABASE): no
+                # `-h`/`-U`/`-d` flags on the `pg_dump` line above, so the
+                # command line never repeats what the environment already
+                # states.
+                - name: PGUSER
+                  valueFrom:
+                    secretKeyRef:
+                      name: immich-postgres
+                      key: DB_USERNAME
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: immich-postgres
+                      key: DB_PASSWORD
+                - name: PGDATABASE
+                  valueFrom:
+                    secretKeyRef:
+                      name: immich-postgres
+                      key: DB_DATABASE_NAME
+                # restic's own recognized env vars, same reasoning as
+                # PGUSER/PGPASSWORD/PGDATABASE above, nothing repeated as a
+                # flag. The repository is the NFS export's root directly
+                # (ansible/site.yml: mounted whole at /srv/backup, a
+                # dedicated export with nothing else on it: no
+                # subdirectory to invent).
+                - name: RESTIC_REPOSITORY
+                  value: /srv/backup
+                - name: RESTIC_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: restic-repository
+                      key: RESTIC_PASSWORD
+              volumeMounts:
+                - name: restic-bin
+                  mountPath: /restic-bin
+                - name: backup-repo
+                  mountPath: /srv/backup
+              # 512 MiB: a burst allowance for a job that runs minutes a
+              # day, not a resident process competing for one of
+              # ADR-0002's named slots. pg_dump streams rather than
+              # buffering the database in memory, and restic backs up in
+              # content-defined, multi-megabyte pack files (ADR-0012);
+              # neither scales with the ~20 GB dump size. Comfortably
+              # inside the "three free standard slots" growth capacity
+              # ADR-0002 reserves, without claiming a whole 2 GiB slot for
+              # a job that isn't one.
+              resources:
+                requests:
+                  memory: 512Mi
+                limits:
+                  memory: 512Mi
+          containers:
+            # Only reached once `dump` above has exited 0; see this
+            # file's header. `curlimages/curl` exists specifically so a
+            # Kubernetes step that needs one HTTP call doesn't have to
+            # borrow curl from a bigger image that doesn't otherwise need
+            # it (neither the postgres nor the restic image above ships
+            # curl or wget at runtime).
+            - name: ping
+              image: curlimages/curl:8.9.1@sha256:8addc281f0ea517409209f76832b6ddc2cabc3264feb1ebbec2a2521ffad24e4
+              command: [sh, -c, 'curl -fsS -m 10 --retry 3 "$POSTGRES_DUMP_PING_URL"']
+              env:
+                - name: POSTGRES_DUMP_PING_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: healthchecks-pings
+                      key: POSTGRES_DUMP_PING_URL
+              resources:
+                requests:
+                  memory: 32Mi
+                limits:
+                  memory: 32Mi
+          volumes:
+            - name: restic-bin
+              emptyDir: {}
+            # hostPath, not a PVC: the nfs-client role's second invocation
+            # (ansible/site.yml, #172) already mounts this NAS export at
+            # /srv/backup on node1 by the time this pod schedules there,
+            # same pattern as immich-server's upload/library mounts.
+            # `type: Directory` fails the job instead of silently backing
+            # up into an empty local directory if that mount isn't up.
+            - name: backup-repo
+              hostPath:
+                path: /srv/backup
+                type: Directory
