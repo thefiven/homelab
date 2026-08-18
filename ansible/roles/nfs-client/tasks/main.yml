@@ -29,7 +29,7 @@
 # in one idempotent step. A second run reports changed=0 once an export is
 # mounted with these exact options; a change to nfs_client_mount_options
 # remounts with the new options instead of drifting silently.
-- name: Mount the NAS exports for Immich originals
+- name: Mount the NAS exports
   ansible.posix.mount:
     path: "{{ nfs_client_local_root }}/{{ item }}"
     src: "{{ nfs_client_nas_host }}:{{ nfs_client_nas_export_base }}/{{ item }}"
