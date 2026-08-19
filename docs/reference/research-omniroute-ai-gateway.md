@@ -3,26 +3,35 @@
 **Date:** 2026-08-19
 **Status:** in progress. Covers #189 (164-01, resource footprint, section 1
 below), #190 (164-02, deployment shape, section 2 below), #191 (164-03,
-secrets inventory, section 3 below), and #192 (164-04, provenance check,
-section 4 below). Exposure posture (#193, 164-05), cost/routing impact
-(#194, 164-06), and the recommendation (#195, 164-07) are follow-on tickets.
+secrets inventory, section 3 below), #192 (164-04, provenance check, section
+4 below), and #193 (164-05, exposure posture, section 5 below). Cost/routing
+impact (#194, 164-06) and the recommendation (#195, 164-07) are follow-on
+tickets.
 **Sources:** primary only, per this repo's `/research` convention: the
 project's own repository (`docker-compose.yml`, `Dockerfile`,
 `docs/reference/ENVIRONMENT.md`, `docs/reference/FREE_TIERS.md`,
 `docs/architecture/cluster-decisions.md`, `docs/guides/DOCKER_GUIDE.md`,
 `docs/guides/SETUP_GUIDE.md`, `docs/security/SOCKET_DEV_FINDINGS.md`,
+`docs/security/ROUTE_GUARD_TIERS.md`, `docs/architecture/AUTHZ_GUIDE.md`,
 `SECURITY.md`), its README, its own GitHub issue tracker for real, closed
 reports of measured memory use and of the Socket.dev supply-chain finding
 (section 4), the GitHub REST API for the repository's and owner's own
 metadata (creation dates, contributor/commit counts, commit-signature
 verification), the npm registry API for the published package's metadata
-and download counts, the public GitHub Advisory Database, and this
-repository's own existing `workloads/` manifests (`workloads/immich/`,
-including `workloads/immich/secrets/immich-postgres.sops.yaml` and
-`server-deployment.yaml`'s `secretKeyRef` usage) and
-`docs/adr/0009-secrets-sops-age.md` as the SOPS+age precedent being compared
-against. Every claim carries its URL inline. Figures pulled via API are
-timestamped to this check (2026-08-19); they move as the project grows.
+and download counts, the public GitHub Advisory Database, this repository's
+own existing `workloads/` manifests (`workloads/immich/`, including
+`workloads/immich/secrets/immich-postgres.sops.yaml` and
+`server-deployment.yaml`'s `secretKeyRef` usage), `docs/adr/0009-secrets-sops-age.md`
+as the SOPS+age precedent being compared against, `docs/adr/0011-cloudflare-tunnel-traefik-acme-tailscale.md`
+and `workloads/immich/server-service.yaml` as the exposure-mechanism
+precedent (section 5), `ansible/roles/tailscale/` as this platform's own
+Tailscale provisioning, and, for section 5's OAuth redirect-URI check,
+Google's own OAuth 2.0 documentation
+(<https://developers.google.com/identity/protocols/oauth2/web-server>) and
+Tailscale's own HTTPS documentation
+(<https://tailscale.com/kb/1153/enabling-https>). Every claim carries its
+URL inline. Figures pulled via API are timestamped to this check
+(2026-08-19); they move as the project grows.
 
 ---
 
@@ -581,9 +590,16 @@ in the dashboard, not code that runs on install or unattended, with the
 minification rather than deliberate obfuscation. Two of the six were
 acknowledged as real gaps: a Cloud Sync credential-overwrite path with no
 signature check, and a single-step keychain-import flow with no
-per-credential confirmation. Both were fixed the same day, in a linked PR
-(#2871, merged to a `release/v3.8.6` branch) referenced in a second
-comment at 2026-05-28T19:58 UTC: the Cloud Sync path now requires an
+per-credential confirmation. A fix PR was opened the same evening (#2871,
+created 2026-05-28T19:56 UTC, referenced in a second comment at
+2026-05-28T19:58 UTC), but did not merge to `release/v3.8.6` until
+2026-05-29T11:42 UTC (`GET /repos/diegosouzapw/OmniRoute/pulls/2871`),
+about 15 hours after the issue itself was already closed (below): the
+issue was closed on the strength of an open, not-yet-merged PR, not a
+landed fix, a distinction the maintainer's own comment names in the future
+tense ("PR #2871 is open and will merge into release/v3.8.6 ... [o]nce
+merged you can git pull and rebuild locally to validate"). Once merged, the
+Cloud Sync path now requires an
 `HMAC-SHA256` signature (`crypto.timingSafeEqual`) before accepting a
 credential overwrite, defaulting off unless
 `OMNIROUTE_CLOUD_SYNC_SECRETS=true` is set; the keychain import became a
@@ -620,7 +636,11 @@ affecting `omniroute` returns no results
 (`GET https://api.github.com/advisories?affects=omniroute` → `[]`). The
 Socket.dev flag never escalated to a GHSA. Measured end to end: the issue
 closed at 2026-05-28T20:25 UTC, under five hours after it was opened and
-about 34 hours after Socket.dev's own detection timestamp.
+about 34 hours after Socket.dev's own detection timestamp; the fix PR
+itself did not merge until 2026-05-29T11:42 UTC, about 49 hours after
+detection and roughly 15 hours after the issue closed (above), a gap
+between "issue resolved" and "fix landed" worth keeping separate rather
+than treating the issue-closure timestamp as the fix-shipped timestamp.
 
 ### 4.6 npm package integrity
 
@@ -651,11 +671,44 @@ thread and the currently-published documentation, not a fresh scan. npm's
 provenance-attestation and 2FA status for the `omniroute` package are not
 exposed by the public registry API and were not checked by another means.
 Several similarly-named, unrelated repositories surfaced during search
-(other authors' own `omniroute`-named forks and clones, and an unrelated
-project, `decolua/9router`, separately flagged by Socket.dev under a
-different maintainer) were not cross-checked for shared code or maintainer
-overlap with `diegosouzapw/OmniRoute`; nothing found suggests a
-connection, but it was not actively ruled out either.
+(other authors' own `omniroute`-named forks and clones) were not
+cross-checked for shared code or maintainer overlap with
+`diegosouzapw/OmniRoute`; nothing found suggests a connection, but it was
+not actively ruled out either.
+
+One name from that search is not actually unrelated, a correction to how an
+earlier pass through this section framed it: `decolua/9router` is not a
+separate project that merely shares a name with a component OmniRoute
+happens to also call "9router." OmniRoute's own architecture doc names
+`9router` as one of five registered router backends, `supervised` lifecycle,
+"a local child process OmniRoute installs/starts/stops/health-checks"
+(`docs/architecture/ROUTER_BACKENDS.md`,
+<https://raw.githubusercontent.com/diegosouzapw/OmniRoute/main/docs/architecture/ROUTER_BACKENDS.md>),
+and the npm registry confirms it is the identical package: `9router` on npm
+has exactly one maintainer, `decolua`
+(<https://registry.npmjs.org/9router>). The CVE `docs/security/ROUTE_GUARD_TIERS.md`
+cites as its own justification for gating `/api/services/` LOCAL_ONLY,
+GHSA-fhh6-4qxv-rpqj, is filed against that exact package: "9router:
+Unauthenticated Remote Code Execution via unprotected MCP custom plugin
+routes," source `github.com/decolua/9router`
+(<https://github.com/advisories/GHSA-fhh6-4qxv-rpqj>). So OmniRoute embeds a
+third-party service with a known unauthenticated-RCE advisory against it,
+by design, as an opt-in "companion service" the maintainer's own attestation
+document names directly: "9router is an optional locally-installable
+companion service (think: WordPress-style plugin) — strict opt-in," shipped
+`not_installed` by default, spawned only from a fixed binary allowlist, and
+gated LOCAL_ONLY before any auth check
+(`docs/security/SOCKET_DEV_FINDINGS.md` §4/§6,
+<https://raw.githubusercontent.com/diegosouzapw/OmniRoute/main/docs/security/SOCKET_DEV_FINDINGS.md>).
+That is a materially different fact than "unrelated, not cross-checked": the
+dependency is real, the maintainer is transparent about embedding a
+component with a known CVE against it, and the stated mitigation (opt-in,
+not-installed-by-default, loopback-gated) is the same LOCAL_ONLY mechanism
+section 5.4 verifies independently. It does not reverse 4.8's verdict below,
+if anything it is a second, concrete instance of the same "responds
+substantively, mitigates rather than hides" pattern 4.5 already found, but
+it is not the same claim as "nothing found suggests a connection," and this
+section's earlier pass should not have said so.
 
 ### 4.8 Verdict
 
@@ -669,9 +722,10 @@ the package. The one substantive independent scrutiny event found, an
 automated supply-chain scan flagging credential-adjacent code paths
 (exactly the category of concern that would matter most for a gateway
 that proxies provider API keys), produced a same-day, per-finding
-technical reply, two real fixes shipped within about 34 hours with tests
-and a public attestation document, and durable documentation that still
-matches the claim three months later. That is evidence of a maintainer who
+technical reply and a fix PR opened the same evening, merged about 49
+hours after Socket.dev's detection (4.5) with tests and a public
+attestation document, and durable documentation that still matches the
+claim three months later. That is evidence of a maintainer who
 responds substantively to scrutiny rather than one who goes quiet or
 hand-waves when actually challenged, which is the part of "provenance"
 this ticket's checklist (maintainer identity, commit authorship,
@@ -686,6 +740,213 @@ Socket.dev episode is the one fact from this section worth carrying
 forward into #195's recommendation explicitly, since it is the closest
 thing to a real incident this project has had.
 
-The exposure posture (#193/164-05), cost/routing impact against calling
-Anthropic directly (#194/164-06), and the recommendation (#195/164-07) are
-follow-on tickets.
+The cost/routing impact against calling Anthropic directly (#194/164-06) and
+the recommendation (#195/164-07) are follow-on tickets.
+
+---
+
+## 5. Exposure posture
+
+### 5.1 ADR-0011's default already answers this, absent a new argument
+
+ADR-0011 states the platform's exposure default plainly: "Any future,
+not-yet-known service defaults to private until a ticket argues it out"
+(`docs/adr/0011-cloudflare-tunnel-traefik-acme-tailscale.md`, "Exposure
+posture"). #164's own problem statement pre-commits to the same answer for
+OmniRoute specifically, story 4: "this is a tool that proxies API keys and
+routes coding-agent traffic, so it defaults private (Tailscale-only,
+matching Immich and the Flux-UI ticket's default) unless a reason to expose
+it publicly is argued." Nothing found across sections 1-4 argues the other
+way. OmniRoute is not one of ADR-0011's two named public exceptions (the
+showcase web stacks, outward-facing by design); it is an operator-facing
+proxy sitting in front of provider credentials and coding-agent traffic,
+the same shape ADR-0011 already private-gates Immich for (credential and
+CVE-surface exposure) and the Flux-UI research private-gates every
+in-cluster dashboard candidate for (`research-flux-ui-dashboard.md`
+section 4.3). **Private, Tailscale-only, never through the Cloudflare
+tunnel, is the default this ticket confirms rather than re-derives.** What
+this section adds beyond restating that default is what "private" actually
+means once OmniRoute's own access-control code is read against it: the
+mechanism this repo uses for "private" (5.2) is not the same thing as the
+loopback boundary OmniRoute's own security model relies on (5.4), and that
+gap has a concrete consequence for which of OmniRoute's routes actually
+work under this posture.
+
+### 5.2 The mechanism: NodePort, which is LAN-and-Tailscale, not a Tailscale-only network
+
+This repo's existing precedent for "private, Tailscale-only" is not a
+Tailscale-scoped network boundary; it is a plain Kubernetes `NodePort`
+Service with no ingress route and no Tailscale-aware access control of its
+own. Immich's own `Service` manifest states this outright: "NodePort, not
+Ingress: ADR-0011 keeps Immich private-only, reachable over LAN or
+Tailscale, never through the public Cloudflare tunnel. A NodePort ... is
+reachable at `<node-LAN-IP>:32283` and `<node-Tailscale-IP>:32283` alike,
+since both addresses terminate on the same node1 kubelet"
+(`workloads/immich/server-service.yaml`). "Private" here means "off the
+public tunnel," not "inside a Tailscale-only network": anything already on
+the LAN reaches the NodePort exactly as anything on the tailnet does, the
+same boundary ADR-0011's own "Segmentation" section names as a limit, not
+an omission ("this buys isolation from the internet, and nothing else...
+[a]ny device already on the LAN can still reach the NAS"). A
+`workloads/omniroute/` `Service` built the same way (the only exposure
+mechanism this repo has used for a private workload so far) inherits the
+same shape: reachable from the LAN and the tailnet alike, unauthenticated
+at the network layer, with no VPN-side check gating who is calling. Whether
+that is an acceptable boundary for a credential-proxying tool is exactly
+what OmniRoute's own `REQUIRE_API_KEY` setting has to answer (5.3), since
+the network layer this repo has does not answer it on its own.
+
+Confirmed against `ansible/roles/tailscale/`: this platform's Tailscale
+role installs the client and joins the tailnet with an auth key
+(`ansible/roles/tailscale/tasks/main.yml`); nothing in it enables MagicDNS
+or provisions an HTTPS certificate for node1's tailnet name. node1 is
+reached at its Tailscale IP, plain HTTP, the same as its LAN address. That
+fact is not a footnote here; it is the reason section 5.5's OAuth
+redirect-URI question resolves the way it does.
+
+### 5.3 REQUIRE_API_KEY: the setting that actually gates the traffic this deployment carries
+
+The route that matters most for this deployment, the `/v1/*` proxy path
+Claude Code would call, is classified `CLIENT_API` by OmniRoute's own
+authorization pipeline, and its auth requirement is conditional, not fixed:
+"Bearer key when the effective `REQUIRE_API_KEY` feature flag is enabled"
+(`docs/architecture/AUTHZ_GUIDE.md`, "Route Classes" table,
+<https://raw.githubusercontent.com/diegosouzapw/OmniRoute/main/docs/architecture/AUTHZ_GUIDE.md>).
+`REQUIRE_API_KEY` itself defaults to `false`
+(`docs/reference/ENVIRONMENT.md` section 4, "Security & Authentication"),
+and the same section's own "Hardening Checklist" lists it as the second of
+five variables under "Production security minimum" (`AUTH_COOKIE_SECURE=true`
+comes first), which is still the plainest signal available that the shipped
+default is not the hardened one. `API_HOST`,
+`HOST`, and `OMNIROUTE_SERVER_HOST` (the three variables that matter
+depending on which server-start path is used) all default to `0.0.0.0`
+(ENVIRONMENT.md section 3): nothing at the application layer binds
+OmniRoute to loopback on its own. Put together with 5.2: a
+`workloads/omniroute/` `Service` deployed exactly like Immich's, with
+`REQUIRE_API_KEY` left at its shipped default, would accept unauthenticated
+`/v1/chat/completions` calls from anything already on the LAN or the
+tailnet, spending whatever provider quota or paid-provider credentials
+OmniRoute holds on the operator's behalf. This is not a defect specific to
+this platform's network shape; it is the same "off by default, on by
+operator action" pattern the Dockerfile's memory ceiling (section 1.2) and
+the OAuth-secret table (section 3.4) already showed for other settings.
+The action this ticket's exposure posture requires, beyond the network
+placement itself, is setting `REQUIRE_API_KEY=true` (and issuing Claude
+Code its own key via the dashboard) as part of whatever manifest a future
+deployment ticket writes; NodePort placement on the tailnet alone does not
+supply that gate.
+
+### 5.4 LOCAL_ONLY routes: private exposure here does not mean loopback
+
+OmniRoute's own security documentation draws a narrower boundary than
+"private network" for a specific set of routes, and this repo's NodePort
+mechanism sits on the wrong side of it. `docs/security/ROUTE_GUARD_TIERS.md`
+defines a `LOCAL_ONLY` tier, "enforced by `isLocalOnlyPath(path)` → loopback
+host check," applied unconditionally, before any auth check, to every
+"spawn-capable" route: `/api/cli-tools/runtime/`, `/api/services/`
+(embedded Redis/9router install), `/api/tools/agent-bridge/`,
+`/api/tools/traffic-inspector/`, `/api/plugins/`, `/api/local/` (1-click
+Redis launcher), `/api/oauth/cursor/auto-import`, and
+`/api/providers/{id}/login` (a headful Playwright browser launched for
+web-cookie provider logins), among others named in the tier's own table
+(<https://raw.githubusercontent.com/diegosouzapw/OmniRoute/main/docs/security/ROUTE_GUARD_TIERS.md>).
+The stated reason is a named CVE class (GHSA-fhh6-4qxv-rpqj): a
+management endpoint that spawns a subprocess is remote code execution the
+moment it is reachable off-host, so the loopback check runs "before auth
+runs" specifically so a leaked JWT or API key cannot reach it, and the
+document's own operator guidance names Tailscale explicitly as one of the
+tunnel/proxy shapes this check is designed to survive: "If you run
+OmniRoute behind a reverse proxy or tunnel (nginx, Caddy, Cloudflare
+Tunnel, Tailscale, Ngrok), the loopback check still protects the
+spawn-capable routes above." A narrow carve-out exists
+(`LOCAL_ONLY_MANAGE_SCOPE_BYPASS_PREFIXES`, a `manage`-scoped Bearer key),
+but it applies to exactly one prefix, `/api/mcp/`; the document is explicit
+that `/api/cli-tools/runtime/` and `/api/services/` are "intentionally
+excluded because they can spawn arbitrary subprocesses," with no bypass
+available at any privilege level.
+
+The consequence for this platform: a request arriving at a NodePort Service
+does not originate from `127.0.0.1` inside the container, whether it
+crosses the LAN or the tailnet to get there, so every `LOCAL_ONLY` route
+above returns `403 LOCAL_ONLY` for every caller under the exposure posture
+5.1 settles on, including the operator's own browser over Tailscale. This
+is the correct outcome from OmniRoute's own threat model (it is exactly the
+"exposed behind Tailscale" case the guard is written to survive, per the
+quoted operator guidance), not a bug this deployment introduces, but it is
+an operational fact worth stating plainly for whichever ticket writes the
+actual manifest: the web-cookie provider-login flow, the embedded-Redis
+one-click launcher, the CLI-tools runtime, and the traffic
+inspector/agent-bridge tools are unreachable through the standing NodePort
+exposure, by design, at any privilege level. Reaching them requires an
+actual loopback connection to the pod, which this repo already has
+precedent for through a different, existing mechanism: `kubectl
+port-forward`, used elsewhere in this repo to reach a pod's own port
+without a `Service` (`docs/how-to/quarterly-postgres-restore-drill.md`).
+Nothing found suggests this repo needs any `LOCAL_ONLY` route for its
+stated use case (Claude Code calling `/v1/*`, a `CLIENT_API` route, not
+`LOCAL_ONLY`), so this is recorded as a fact for whoever operates the
+deployment later, not a gap this ticket needs to close.
+
+### 5.5 The OAuth redirect-URI question from section 3.4: resolved, not moot
+
+Section 3.4 left one dependency open: whether a Tailscale-only origin
+counts as "remote" for the three providers needing an operator-registered
+OAuth client and secret (Gemini, Antigravity, GitLab Duo), since
+`docs/reference/ENVIRONMENT.md` section 11 only distinguishes "built-in
+credentials for localhost development" from "remote deployments," without
+defining "remote" further. Read against 5.2, the answer for node1's actual
+address does not turn on that definition at all: node1 is reached by its
+raw Tailscale IP over plain HTTP, and Google's own OAuth documentation
+states two independent rules that a raw-IP, HTTP origin fails regardless of
+how "remote" is defined: "Redirect URIs must use the HTTPS scheme, not
+plain HTTP. Localhost URIs (including localhost IP address URIs) are
+exempt from this rule," and separately, "Hosts cannot be raw IP addresses.
+Localhost IP addresses are exempted from this rule"
+(<https://developers.google.com/identity/protocols/oauth2/web-server>).
+node1's Tailscale IP is neither `localhost` nor an HTTPS hostname, so
+Gemini and Antigravity's OAuth redirect URI cannot be registered against
+this platform's current exposure mechanism at all, independent of the
+"remote" question 3.4 raised.
+
+A fix exists but is not in place: Tailscale itself can issue a real HTTPS
+certificate for a MagicDNS name (`https://machine-name.tailnet-name.ts.net`)
+via `tailscale cert`, gated on enabling MagicDNS and the "HTTPS
+Certificates" toggle in the tailnet admin console
+(<https://tailscale.com/kb/1153/enabling-https>), which would give node1 an
+HTTPS, non-raw-IP address Google's rules accept. Checked against this
+platform's own provisioning: `ansible/roles/tailscale/` installs the client
+and joins the tailnet with an auth key only; neither MagicDNS nor an HTTPS
+certificate is provisioned anywhere in this repo today (5.2). Standing up
+that path would be new platform infrastructure, not an OmniRoute-specific
+configuration change, and per #164's own scoping this deployment's only
+committed consumer is Claude Code, a public OAuth client needing no secret
+and no HTTPS-specific redirect URI (ENVIRONMENT.md section 11). Section
+3.6 already found no planned provider connection that would need Gemini,
+Antigravity, or GitLab Duo's secret-bearing OAuth path. This section closes
+3.4's open dependency with a concrete answer rather than carrying it
+forward: those three providers are not reachable through this platform's
+exposure mechanism as it exists today, a fact for a future ticket to
+re-open only if one of them is ever proposed as an actual consumer, not
+something #195's recommendation needs to resolve now.
+
+### 5.6 Verdict
+
+**Private, Tailscale-only, never through the Cloudflare tunnel**, confirming
+ADR-0011's default and #164's own pre-commitment (5.1): nothing found in
+sections 1-4 or this section argues for public exposure. Concretely, that
+means a `workloads/omniroute/` `Service` shaped like
+`workloads/immich/server-service.yaml`, a plain `NodePort` with no ingress
+route (5.2). Two things this ticket adds beyond confirming the default,
+both facts for whichever ticket writes the deployment manifest rather than
+blockers to #195's recommendation: `REQUIRE_API_KEY=true` has to be set
+explicitly, since the network placement alone leaves the `/v1/*` proxy
+path open to anything already on the LAN or tailnet (5.3); and OmniRoute's
+own `LOCAL_ONLY` route tier, node1's NodePort exposure, and Google's OAuth
+redirect-URI rules combine to put several of OmniRoute's own features
+(the web-cookie provider-login flow, the embedded-Redis one-click launcher,
+and Gemini/Antigravity's OAuth connection specifically) out of reach under
+this posture unless the operator reaches the pod directly via `kubectl
+port-forward` or this platform later stands up Tailscale MagicDNS/HTTPS
+(5.4, 5.5). None of this changes the exposure default itself; it is the
+concrete shape "private by default" takes once OmniRoute's own access
+model is read against the mechanism this repo actually has for it.
