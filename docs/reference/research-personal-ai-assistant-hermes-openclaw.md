@@ -4,9 +4,10 @@
 **Status:** in progress. Covers #196 (165-01, Hermes footprint/storage/provenance,
 section 1 below), #197 (165-02, OpenClaw's equivalent check, section 2 below),
 #198 (165-03, provider integration and secrets for both, section 3 below),
-and #199 (165-04, use-case analysis, section 4 below). A local-inference/VRAM
-check (#200/165-05), exposure posture (#201/165-06), and the final comparison
-and recommendation (#202/165-07) are follow-on tickets against this same file.
+#199 (165-04, use-case analysis, section 4 below), and #200 (165-05,
+VRAM/local inference check, section 5 below). Exposure posture (#201/165-06)
+and the final comparison and recommendation (#202/165-07) are follow-on
+tickets against this same file.
 **Sources:** primary only, per this repo's `/research` convention: the
 project's own repository (`README.md`, `Dockerfile`, `docker-compose.yml`,
 `.env.example`, `hermes_state_search.py`, and the documentation site's source
@@ -17,12 +18,17 @@ under `website/docs/` (`developer-guide/session-storage.md`,
 `integrations/providers.md`, `user-guide/messaging/index.md` and its
 per-platform pages for Telegram, Discord, Slack, WhatsApp, Signal and email,
 `user-guide/secrets/index.md`, `user-guide/features/provider-routing.md`,
-`user-guide/features/credential-pools.md`), OpenClaw's own repository and
+`user-guide/features/credential-pools.md`, `guides/local-ollama-setup.md`,
+`guides/local-llm-on-mac.md`), OpenClaw's own repository and
 documentation site (`docs/providers/index.md`, `docs/providers/clawrouter.md`,
 `docs/gateway/secrets.md`, `docs/reference/secretref-credential-surface.md`,
 `docs/channels/index.md`, `docs/channels/telegram.md`, `docs/channels/discord.md`,
 `docs/channels/slack.md`, `docs/channels/whatsapp.md`,
-`docs/channels/signal.md`), the project's own GitHub issue tracker for real,
+`docs/channels/signal.md`, `docs/gateway/local-models.md`,
+`docs/gateway/local-model-services.md`, and the `extensions/ollama/`,
+`extensions/lmstudio/`, `extensions/vllm/`, and `extensions/clawrouter/`
+plugin manifests (`openclaw.plugin.json`) and `extensions/ollama/src/`
+discovery source), the project's own GitHub issue tracker for real,
 open and closed reports of measured memory and storage growth, the GitHub
 REST and Search APIs for the repository's and the `NousResearch` and
 `openclaw` organizations' own metadata (creation dates, contributor/commit
@@ -1457,9 +1463,162 @@ uniquely fills.
 
 ---
 
-Sections 1 through 4 cover #196 (165-01, Hermes), #197 (165-02, OpenClaw),
-#198 (165-03, provider integration and secrets for both), and #199
-(165-04, use-case analysis). The local-inference/VRAM check (#200/165-05),
-exposure posture (#201/165-06), and the final comparison and
-recommendation (#202/165-07) are all follow-on tickets against this same
-file.
+## 5. VRAM / local inference check (neither should need it)
+
+This section covers #165's story 3: confirmation that neither candidate needs
+local model inference, closing the loop with ADR-0002 rather than assuming it
+from either README. ADR-0002 allocated local inference **zero** VRAM, not
+deferred headroom, on the grounds that the card's 8 GB is already contested by
+Immich's own machine learning workload and neither occupant publishes a VRAM
+budget to arbitrate against
+(`docs/adr/0002-resource-budget-and-feasibility-verdict.md`, "Local inference
+is allocated zero"). Its own reopening condition is narrow and explicit: "a
+second node carrying its own GPU," matching the platform's standing preference
+to grow by adding machines rather than by modifying this one (same source).
+#165's story 3 names the exact risk this section checks for: that a "local
+endpoint" option either project also supports could silently reopen that
+zero-VRAM allocation if either candidate's *chosen* configuration touched it
+by default, distinct from whether the capability merely exists somewhere in
+the docs.
+
+### 5.1 Hermes: local inference is a documented, fully opt-in guide, not a default
+
+Hermes ships three separate local-inference guides, none active in a standard
+deployment. `website/docs/guides/local-ollama-setup.md` frames local Ollama as
+an explicit alternative to its own cloud providers, not the default path, with
+a tiered hardware table: "8 GB (for 3B models)" RAM / 4 cores minimum, "32+ GB
+(for 27B+ models)" RAM / 8+ cores / "NVIDIA GPU with 8+ GB VRAM" recommended,
+and GPU stated as explicitly optional: "Not required" but "speeds things up
+significantly"
+(<https://raw.githubusercontent.com/NousResearch/hermes-agent/main/website/docs/guides/local-ollama-setup.md>).
+A second guide, `website/docs/guides/local-llm-on-mac.md`, covers llama.cpp
+and omlx (MLX) on Apple Silicon, using unified memory rather than discrete
+VRAM: "you'll need 32 GB+ of unified memory" for 27B/35B models, 8-16 GB
+machines suiting a 9B model instead
+(<https://raw.githubusercontent.com/NousResearch/hermes-agent/main/website/docs/guides/local-llm-on-mac.md>).
+Section 3.1 already found vLLM and LM Studio as two more direct-connection
+entries in the same `integrations/providers.md` table
+(<https://raw.githubusercontent.com/NousResearch/hermes-agent/main/website/docs/integrations/providers.md>).
+
+None of the four backends activate without an operator's explicit choice.
+`reference/environment-variables.md` documents one local/GPU-adjacent
+variable that already defaults to a local host, `LM_BASE_URL` ("LM Studio
+base URL (default: `http://localhost:1234/v1`)"), but that default is inert
+on its own: `integrations/providers.md`'s own setup steps show LM Studio is
+reached only through the interactive `hermes model` picker, selecting "LM
+Studio" by name before that URL is ever dialed
+(<https://raw.githubusercontent.com/NousResearch/hermes-agent/main/website/docs/integrations/providers.md>,
+"LM Studio" section). The remaining local/GPU-adjacent variables
+(`OLLAMA_BASE_URL`, `OPENAI_BASE_URL` pointed at a custom endpoint,
+`NVIDIA_BASE_URL` pointed at a local NIM endpoint,
+`HERMES_LOCAL_STREAM_STALE_TIMEOUT`) carry no default that resolves to a
+local host at all
+(<https://raw.githubusercontent.com/NousResearch/hermes-agent/main/website/docs/reference/environment-variables.md>).
+Standard deployments use the remote providers named in section 3.1 instead
+(Nous Portal, OpenRouter, Anthropic, and the rest of the 28-entry static-key
+table), each needing only its own API key, no endpoint override, and none
+of the 28 is `lmstudio`, `ollama`, or any other local backend. Consistent
+with that, the repository's own `docker-compose.yml` and `Dockerfile`, both
+checked in full already for section 1.1's resource-limits question, carry no
+`gpu`, `nvidia`, or `cuda` reference anywhere
+(<https://raw.githubusercontent.com/NousResearch/hermes-agent/main/docker-compose.yml>,
+<https://raw.githubusercontent.com/NousResearch/hermes-agent/main/Dockerfile>).
+A default Hermes container has no path to a GPU device at all, regardless of
+which provider is configured.
+
+### 5.2 OpenClaw: local inference is opt-in at the config level, with one default-active discovery probe
+
+OpenClaw's own framing is the same shape as Hermes's: local models are named
+as a deliberately higher-effort path, not the recommended one.
+`docs/gateway/local-models.md` states the hardware floor directly: "Aim for
+**2+ maxed-out Mac Studios or an equivalent GPU rig (~$30k+)** for a
+comfortable agent loop. A single **24 GB** GPU only handles lighter prompts at
+higher latency," and steers newcomers elsewhere: "For the lowest-friction
+path, start with LM Studio or Ollama and `openclaw onboard`"
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/docs/gateway/local-models.md>).
+Selecting any local backend (LM Studio, Ollama, vLLM, ds4, or a custom
+OpenAI-compatible server) requires an operator-authored
+`models.providers.<id>` block naming a `baseUrl` and, for backends OpenClaw
+itself manages the process for, a `localService` command; nothing is started
+until that provider is actually selected as a model's `primary` or
+`fallbacks` entry (`docs/gateway/local-model-services.md`, "How it works":
+"OpenClaw does not install launchd, systemd, Docker, or any daemon for
+this. The server is a plain child process of whichever OpenClaw process
+first needed it"
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/docs/gateway/local-model-services.md>)).
+Mechanically this is the same activation-only-through-explicit-config shape
+section 3.1 already found for every provider on both candidates.
+
+One default-active behavior differs from Hermes, though it does not touch
+VRAM by itself. The `ollama`, `lmstudio`, `vllm`, and `clawrouter` plugins all
+carry `"enabledByDefault": true` in their own `openclaw.plugin.json`
+manifests alike
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/extensions/ollama/openclaw.plugin.json>,
+<https://raw.githubusercontent.com/openclaw/openclaw/main/extensions/lmstudio/openclaw.plugin.json>,
+<https://raw.githubusercontent.com/openclaw/openclaw/main/extensions/vllm/openclaw.plugin.json>,
+<https://raw.githubusercontent.com/openclaw/openclaw/main/extensions/clawrouter/openclaw.plugin.json>):
+that field governs whether the plugin's code loads at all, not whether it
+does anything without configuration, so it is not itself evidence of a
+default local-inference path. The real differentiator is each plugin's own
+`activation.onStartup` field: `false` for `lmstudio` and `vllm`, `true` only
+for `ollama`. The ollama plugin's own `uiHints` name what that startup
+activation does: "skips implicit startup discovery of ambient local or
+remote Ollama models" when disabled, meaning it runs by default when not
+(same `openclaw.plugin.json` source). That discovery is a network probe, not
+a model load: absent explicit configuration, its default target is
+`http://127.0.0.1:11434` (`OLLAMA_DEFAULT_BASE_URL`, or the Docker-host
+equivalent `http://host.docker.internal:11434` when
+`OPENCLAW_DOCKER_SETUP` is set)
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/extensions/ollama/src/defaults.ts>),
+checking whether a server is already listening on Ollama's default port, not
+spawning one or loading a model into it. No VRAM is touched by this probe on
+its own; it only becomes relevant if an operator separately runs a local
+Ollama server with a loaded model on the same host, at which point discovery
+would surface it as a selectable provider, not select it automatically. This
+default-on probe is a real behavioral difference from Hermes worth carrying
+forward, but as a default-network-activity fact for #201 (165-06) to weigh,
+not a VRAM one for this section.
+
+OpenClaw's own `docker-compose.yml` and `Dockerfile`, both already checked in
+full for section 2.1's resource-limits question, carry no `gpu`, `nvidia`, or
+`cuda` reference either, the same absence as Hermes's own artifacts
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/docker-compose.yml>,
+<https://raw.githubusercontent.com/openclaw/openclaw/main/Dockerfile>). A
+default OpenClaw container has no path to a GPU device, same as Hermes.
+
+### 5.3 Verdict, read against ADR-0002
+
+Confirmed for both candidates: the recommended, default-configuration path
+(Nous Portal or any static-key provider for Hermes; ClawRouter or any
+static-key provider for OpenClaw, per section 3.1) is remote-only and never
+touches local GPU or VRAM, and neither project's shipped Docker artifacts
+request a GPU device. #165's story 3 is settled, for both, exactly as its own
+title expected.
+
+What "neither should need it" does not mean is "neither can." Both
+candidates ship genuine, actively-documented local-inference options that do
+need GPU or unified memory once turned on: four backends apiece (Ollama,
+llama.cpp/MLX or ds4, vLLM, LM Studio for Hermes and OpenClaw respectively,
+with near-identical backend names on both sides). Every one of those paths
+requires an operator to author explicit configuration naming a local
+endpoint; none is reachable by a default install or a default environment
+variable value on either candidate. The one asymmetry found is OpenClaw's
+default-on loopback discovery probe for Ollama (5.2), which checks for a
+local server without loading a model and so does not touch VRAM itself. If
+this platform ever deployed either candidate and then configured it against
+a local backend, that would be the platform choosing to exercise the exact
+"second node carrying its own GPU" case ADR-0002 already named as its own
+reopening condition, not a default silently doing so. Whichever ticket
+eventually recommends a candidate should carry that distinction forward as a
+deployment constraint (never author a `models.providers.*` block naming a
+local endpoint on this platform's current single-GPU-node shape, without
+separately reopening ADR-0002 first), not as an open question this section
+left unresolved.
+
+---
+
+Sections 1 through 5 cover #196 (165-01, Hermes), #197 (165-02, OpenClaw),
+#198 (165-03, provider integration and secrets for both), #199 (165-04,
+use-case analysis), and #200 (165-05, VRAM/local inference check). Exposure
+posture (#201/165-06) and the final comparison and recommendation
+(#202/165-07) are follow-on tickets against this same file.
