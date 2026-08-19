@@ -3,10 +3,10 @@
 **Date:** 2026-08-19
 **Status:** in progress. Covers #196 (165-01, Hermes footprint/storage/provenance,
 section 1 below), #197 (165-02, OpenClaw's equivalent check, section 2 below),
-and #198 (165-03, provider integration and secrets for both, section 3
-below). Use-case analysis (#199/165-04), a local-inference/VRAM check
-(#200/165-05), exposure posture (#201/165-06), and the final comparison and
-recommendation (#202/165-07) are follow-on tickets against this same file.
+#198 (165-03, provider integration and secrets for both, section 3 below),
+and #199 (165-04, use-case analysis, section 4 below). A local-inference/VRAM
+check (#200/165-05), exposure posture (#201/165-06), and the final comparison
+and recommendation (#202/165-07) are follow-on tickets against this same file.
 **Sources:** primary only, per this repo's `/research` convention: the
 project's own repository (`README.md`, `Dockerfile`, `docker-compose.yml`,
 `.env.example`, `hermes_state_search.py`, and the documentation site's source
@@ -30,12 +30,15 @@ counts, release cadence, security-advisories endpoint), the public GitHub
 Advisory Database API (`api.github.com/advisories`), the PyPI registry API
 and the npm registry API for package metadata, and
 `docs/adr/0002-resource-budget-and-feasibility-verdict.md`,
-`docs/adr/0009-secrets-sops-age.md`, and
-`docs/adr/0014-hostpath-local-pv-no-csi.md` as the resource-budget,
-secrets-mechanism, and storage-abstraction precedents this file checks both
-candidates against. Every claim carries its URL inline. Figures pulled via
-API are timestamped to this check (2026-08-19); they move as the project
-grows.
+`docs/adr/0009-secrets-sops-age.md`,
+`docs/adr/0014-hostpath-local-pv-no-csi.md`, and
+`docs/adr/0018-ntfy-receiver-healthchecks-witness.md` as the resource-budget,
+secrets-mechanism, storage-abstraction, and messaging-cost precedents this
+file checks both candidates against; OpenClaw's own `VISION.md`; and this
+repository's own `CONTEXT.md` and `docs/agents/*.md` for what use case, if
+any, this platform's own tracker and working conventions already establish
+(section 4). Every claim carries its URL inline. Figures pulled via API are
+timestamped to this check (2026-08-19); they move as the project grows.
 
 ---
 
@@ -1299,9 +1302,164 @@ deployment-shape choice, not by Hermes or OpenClaw.
 
 ---
 
-Sections 1 through 3 cover #196 (165-01, Hermes), #197 (165-02, OpenClaw),
-and #198 (165-03, provider integration and secrets for both). Use-case
-analysis (#199/165-04), the local-inference/VRAM check (#200/165-05),
+## 4. Use case analysis (why one vs other vs neither)
+
+This section covers #165's story 1 (a concrete use case named for each
+candidate before either is adopted) and its "Framing" implementation
+decision (one role, two candidates, decided together, unless the research
+itself finds a genuine non-overlapping use case for each). It stops short
+of a go/no-go recommendation: that synthesis, together with story 11's
+"what's given up," is #202's (165-07) job once #200 (VRAM) and #201
+(exposure) are also in hand. What follows is the evidence that
+recommendation will need on the use-case axis specifically.
+
+### 4.1 No concrete use case is named anywhere in this repo's own tracker
+
+#165 opens by naming the gap directly: "Neither has a defined use case on
+this platform yet." Checked against the rest of the tracker, that is still
+true after a full search, not just #165's own framing of itself. #165 has
+no comments (`gh issue view 165 --comments`, empty). Its sibling ticket,
+#164 (Omniroute), only ever refers to Hermes/OpenClaw as "potentially" a
+future consumer of the routing layer, never states what either would be
+used for. A repo-wide search for "assistant" across every Markdown file
+returns exactly two hits: this file itself and
+`research-omniroute-ai-gateway.md`'s own reference back to this ticket
+(`grep -rln "assistant" -- "*.md"`, run at the repository root). No ADR,
+no `CONTEXT.md` entry, and no other issue names a task this platform needs
+a chat-reachable agent for. #165's own story 1 second half makes the same
+point structurally, not just rhetorically: "'a personal AI assistant' is
+not itself a requirement this platform has stated," and #18's "N unknown
+services by construction" framing (`docs/adr/0014-hostpath-local-pv-no-csi.md`,
+"the map's own words") is precisely the category this candidate sits in
+today: a plausible future workload the platform is built to accommodate,
+not one anything currently open asks for by name.
+
+That absence is itself the finding this axis has to report, not a gap in
+this check's search. The rest of this section works from what each
+candidate's own docs claim it is *for*, matched against what is actually
+verifiable about this platform, rather than inventing a requirement the
+operator has not stated.
+
+### 4.2 What each candidate is actually for, in its own words
+
+Both projects' own top-level framing (their README's opening paragraph,
+the highest-signal source either project publishes about its own purpose)
+converge on the same shape and diverge on the same axis section 3 already
+found structurally: chat-reachable, tool-executing, remote-first personal
+agent, differing in which use case each leads with.
+
+**Hermes leads with coding-agent framing.** Its README's own words: "The
+self-improving AI agent... it creates skills from experience, improves
+them during use, nudges itself to persist knowledge, searches its own past
+conversations." "Lives where you do: Telegram, Discord, Slack, WhatsApp,
+Signal, and CLI — all from a single gateway process... talk to it from
+Telegram while it works on a cloud VM"
+(<https://raw.githubusercontent.com/NousResearch/hermes-agent/main/README.md>).
+"Delegates and parallelizes: Spawn isolated subagents for parallel
+workstreams. Write Python scripts that call tools via RPC, collapsing
+multi-step pipelines into zero-context-cost turns" and "Research-ready:
+Batch trajectory generation, trajectory compression for training the next
+generation of tool-calling models" (same source) are both framed for
+software/agent work, not general life-assistant tasks.
+
+**OpenClaw leads with device/companion framing.** Its own tagline: "Your
+assistant, on your devices, in your chats." "OpenClaw is a personal AI
+assistant that runs on your devices and meets you in the channels you
+already use... connects models, tools, messaging channels, and optional
+companion apps through one Gateway"
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/README.md>).
+Its own `VISION.md` states the project "started as a personal playground
+... an assistant that can run real tasks on a real computer," with
+"Companion apps on macOS, iOS, Android, Windows, and Linux" and "Better
+computer-use and agent harness capabilities" both named as forward
+priorities, not shipped defaults
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/VISION.md>).
+Section 3.2's own channel table cuts the other way within the six
+platforms #165 named: Hermes covers all six, OpenClaw's official channel
+catalog has no email entry at all (3.2). OpenClaw's breadth claim holds
+only outside that named set: its own README additionally lists Google
+Chat and iMessage among its channels, neither of which #165 named and
+neither of which this check otherwise verified.
+
+The pattern: both projects would answer the same underlying question
+("reach an agent from a phone, have it run tools, remember context")
+identically at the mechanism level (section 3 covers that overlap in
+full); where they diverge is which *kind* of task each project's own
+maintainers optimize for first. Hermes's differentiators point at software
+work; OpenClaw's point at general device/life tasks.
+
+### 4.3 The one verifiable task this platform already has, matched against that split
+
+This platform's own tracker already runs on a chat-reachable-equivalent
+coding agent today, just not remotely: `CLAUDE.md` and `docs/agents/*.md`
+describe an established workflow where an agent reads GitHub issues, edits
+files, and opens PRs against this exact repository (`docs/agents/issue-tracker.md`).
+That is a real, currently-exercised task, run from a terminal session, not
+from a messaging platform. It is also the one task on this platform whose
+shape matches Hermes's own stated differentiators most closely (a coding
+agent, working against a git repository, ideally reachable without a
+laptop) rather than OpenClaw's (voice, camera, screen, canvas, and a wider
+messaging-channel set aimed at general life tasks this platform's own
+tracker has never asked for). No open issue asks for voice control,
+camera access, or a Canvas-style companion app; nothing in `CONTEXT.md` or
+any accepted ADR names a general life-assistant need at all.
+
+This does not make Hermes's use case *stated*: #165 still has not named
+one, and this check should not manufacture a requirement on the operator's
+behalf. What it establishes is narrower and defensible: **if** a concrete
+use case for either candidate exists on this platform, the only one this
+check could ground in something the platform already verifiably does is
+"reach the coding-agent workflow this repository already runs, from a
+phone, without a laptop," and that use case maps onto Hermes's own stated
+differentiators, not OpenClaw's. OpenClaw's differentiators (companion
+apps, device-local actions, a wider general-purpose channel set) answer a
+broader "life assistant" brief this platform's own tracker has never
+raised.
+
+One existing precedent argues the other direction on cost, worth naming
+here rather than deferred to #201: ADR-0018 already faced the "reach me on
+a messaging platform" question for a much lighter need (a one-way alert)
+and picked against it explicitly. "Telegram needs a bot token and a chat
+ID. Discord needs a webhook URL and an account... ntfy asks for nothing:
+no sign-up, no token, no account"
+(`docs/adr/0018-ntfy-receiver-healthchecks-witness.md`, "The receiver").
+Both Hermes and OpenClaw ask for exactly the credential and account
+overhead that ADR-0018 weighed and declined, for a use case (two-way
+conversational reach into an agent) genuinely heavier than the alert
+push ADR-0018 solved. The comparison doesn't settle the question by
+itself, but it is the platform's own most recent revealed preference on
+this exact tradeoff, and #202 should weigh it alongside whatever #201
+finds on exposure.
+
+### 4.4 One role or two: the Framing decision
+
+#165's own Framing decision commits to treating both candidates as
+competing for one role "unless the research itself finds a genuine
+non-overlapping use case for each" (#165, "Implementation Decisions").
+Section 3 already found the two nearly identical at the mechanism level:
+same six-plus-one channel shape (3.2), same "ships its own first-party
+provider aggregator" structure (3.1, Nous Portal vs. ClawRouter), same
+SecretRef-shaped credential model (3.3), same static-PV-shaped storage fit
+(1.2/2.2). What 4.2 adds is that the two do diverge in what each is built
+*for*, not just in provenance and advisory history (section 1.3/2.3): one
+leans coding-agent, one leans device/life-assistant. That divergence is
+real, but it does not on its own amount to the "genuine non-overlapping
+use case for each" #165's Framing clause asks for, because only one side
+of that split (Hermes's) matches something this platform's own tracker
+already does (4.3); the other (OpenClaw's device/companion strength) has
+no corresponding stated need to be non-overlapping *with*. A
+non-overlapping-use-case finding needs two verified needs, not one
+verified need and one unclaimed capability. On the evidence gathered
+across sections 1 through 4, this remains a one-role decision: if either
+is adopted, it is adopted for the coding-agent-reachability use case 4.3
+names, which both projects can serve, not two separate needs each project
+uniquely fills.
+
+---
+
+Sections 1 through 4 cover #196 (165-01, Hermes), #197 (165-02, OpenClaw),
+#198 (165-03, provider integration and secrets for both), and #199
+(165-04, use-case analysis). The local-inference/VRAM check (#200/165-05),
 exposure posture (#201/165-06), and the final comparison and
 recommendation (#202/165-07) are all follow-on tickets against this same
 file.
