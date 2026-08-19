@@ -965,34 +965,45 @@ model is read against the mechanism this repo actually has for it.
 
 Story 5 asks whether the "1200+ models, 340 providers" headline improves on
 calling Anthropic directly for Claude Code, or whether the value is entirely
-in fronting Hermes/OpenClaw's provider costs. The headline figure is the
-repository's own top banner: "one endpoint, 340 providers (90+ free), 1200+
-models" (<https://github.com/diegosouzapw/OmniRoute>). That count is the
-full catalog OmniRoute can proxy to, most of it reachable only by supplying
-the operator's own paid API key for that specific provider, per section
-3.3's finding that most provider connections go through the Dashboard, not a
-free pool. The keyless portion is a much smaller, separately documented
-number: `docs/reference/FREE_TIERS.md`'s own TL;DR counts "290 AI providers"
-with "90+ free", aggregated into "43 provider pools / 516 models" for the
-actual free-tier grant already cited in section 3.1 (~1.53B tokens/month
-recurring)
+in fronting Hermes/OpenClaw's provider costs. That exact figure is the
+repository's own GitHub metadata description, not README.md content: `GET
+/repos/diegosouzapw/OmniRoute` returns `.description` as "Never stop coding.
+Free MIT AI gateway: one endpoint, 340 providers (90+ free), 1200+ models
+... Built by 450+ contributors"
+(<https://api.github.com/repos/diegosouzapw/OmniRoute>). README.md itself,
+fetched raw and grepped in full for `290|340|516|1200`, contains neither
+"340" nor "1200" anywhere: its own hero-banner alt text instead reads "Every
+AI tool → 290 providers — 90+ free — through one endpoint," and its body
+text separately states OmniRoute "aggregates the documented free tiers of
+43 provider pools / 516 models into one honest number"
+(<https://raw.githubusercontent.com/diegosouzapw/OmniRoute/main/README.md>,
+lines 10 and 20 as checked). None of these figures (340/1200, 290, or
+43/516) come from `docs/reference/FREE_TIERS.md`: that document's own
+"Honest headline" line confirms only the pool count already cited in
+section 3.1 ("43 free-tier pools", alongside the ~1.53B tokens/month
+recurring grant) and contains no "290", "340", "516", or "1200" anywhere,
+checked by downloading and grepping the raw file in full
 (<https://raw.githubusercontent.com/diegosouzapw/OmniRoute/main/docs/reference/FREE_TIERS.md>).
-The provider count itself has already drifted between the two documents
-(340 in the README banner, 290 in `FREE_TIERS.md`'s body text), the same
-kind of README-runs-ahead-of-the-rest-of-the-docs churn section 4.6 already
-found in the npm release cadence, not a contradiction worth resolving here.
-What matters for story 5 is smaller than either number: this deployment's
-own use case, per #164's scoping, is Claude Code and potentially
-Hermes/OpenClaw, none of which has a reason to buy access to 1200 paid
-models through a gateway instead of directly. If the free-tier-aggregation
-argument holds at all, it has to hold on the free 516-model slice, and
-section 6.2 checks whether Claude is in it.
+So three different surfaces of the same project state three different
+provider/model counts for what is nominally the same catalog: 340/1200+ in
+the GitHub repo's own metadata, 290/(unstated model count) in the README's
+hero banner, and 43/516 for the free-tier-specific slice in the README's
+body text. That spread is the same kind of README-runs-ahead-of-the-docs
+churn section 4.6 already found in the npm release cadence, not worth
+resolving further here. What matters for story 5 is smaller than any of
+these numbers: this deployment's own use case, per #164's scoping, is
+Claude Code and potentially Hermes/OpenClaw, none of which has a reason to
+buy access to hundreds of paid models through a gateway instead of directly.
+If the free-tier-aggregation argument holds at all, it has to hold on the
+free slice, the 43/516 figure, and section 6.2 checks whether Claude is in
+it.
 
 ### 6.2 Anthropic and Claude are absent from OmniRoute's free-tier pool
 
-`FREE_TIERS.md`'s full free-tier table (43 pools) names no Anthropic or
-Claude entry anywhere: not in the TL;DR summary, not in the per-provider
-table, not in the ToS-attention table (checked in full, same source as 6.1).
+`FREE_TIERS.md`'s full free-tier table (43 pools, per its own "Honest
+headline" line, 6.1) names no Anthropic or Claude entry anywhere: not in the
+TL;DR, not in the per-provider table, not in the ToS-attention table
+(checked in full, same source as 6.1).
 The one route to a genuine Claude response with no Anthropic API key is Kiro
 AI, already named in section 3.1 as one of the two keyless onboarding paths
 ("free Claude, ~50 credits/month per account", README's Quick Start
@@ -1083,6 +1094,34 @@ open with no research doc written (checked via `gh issue view 165`,
 2026-08-19), so this ticket cannot resolve that question, only state what it
 depends on: a "yes" for OmniRoute at all requires a "yes, and it doesn't
 need Claude-quality output" from #165 first.
+
+One mechanism found in passing is worth naming rather than silently
+excluding, since it is a genuinely different cost model from everything
+above and this check did not chase it down fully. README.md describes a
+"Tier 1 Subscription (Claude Code, Codex, Copilot)" routing tier, distinct
+from the API-key and free-tier tiers analyzed in 6.2-6.4: "subscription /
+coding-plan providers read $0 in cost analytics" (line 412), and a separate
+"Quota-Share routing" feature "split[s] a shared account's quota fairly
+across pooled keys" (line 413, same source as 6.1). Read together with
+section 2.3's finding that the `cli`/`host` Docker profiles bundle or mount
+the actual Claude Code CLI binary, this describes OmniRoute driving an
+already-authenticated Claude Code (or Codex, or Copilot) subscription
+session as an upstream backend, serving other callers, such as Hermes or
+OpenClaw, at the flat subscription rate rather than a metered one. That
+would be a materially different, and cheaper, path to Claude-quality output
+for Hermes/OpenClaw than anything found in 6.2. Two things stopped this
+ticket from following it further: it needs the `cli`/`host` profile section
+2.3's own verdict already ruled out for this platform ("nothing on this
+platform needs OmniRoute to run a coding-agent CLI *inside* its own
+container"), not the `base` profile that section actually recommends, and
+no ToS caveat for this specific reuse was found anywhere checked in this
+document (unlike Kiro's explicit prohibition in 6.2), which is an absence,
+not a clean bill. Whether reusing one individual's flat-fee Claude
+subscription session to serve unrelated automated traffic is consistent
+with Anthropic's own consumer subscription terms was not checked here and
+is a fact #195's recommendation should settle before relying on this path,
+not something this ticket's own scope (Claude Code's cost as a direct
+caller, and what #165 will need) required resolving.
 
 ### 6.6 Verdict
 
