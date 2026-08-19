@@ -1360,11 +1360,7 @@ workstreams. Write Python scripts that call tools via RPC, collapsing
 multi-step pipelines into zero-context-cost turns" and "Research-ready:
 Batch trajectory generation, trajectory compression for training the next
 generation of tool-calling models" (same source) are both framed for
-software/agent work, not general life-assistant tasks. Section 3.1's own
-provider catalog corroborates this reading: Hermes lists GitHub Copilot
-and its ACP variant as first-class OAuth providers alongside the general
-frontier-model catalog, a coding-tool integration OpenClaw's own provider
-catalog does not carry.
+software/agent work, not general life-assistant tasks.
 
 **OpenClaw leads with device/companion framing.** Its own tagline: "Your
 assistant, on your devices, in your chats." "OpenClaw is a personal AI
@@ -1378,11 +1374,12 @@ Its own `VISION.md` states the project "started as a personal playground
 computer-use and agent harness capabilities" both named as forward
 priorities, not shipped defaults
 (<https://raw.githubusercontent.com/openclaw/openclaw/main/VISION.md>).
-Section 3.2's channel table already showed OpenClaw's own channel catalog
-running wider than Hermes's within the six platforms #165 named; the
-project's own README additionally lists Google Chat and iMessage among its
-channels, neither of which #165 named and neither of which this check
-otherwise verified.
+Section 3.2's own channel table cuts the other way within the six
+platforms #165 named: Hermes covers all six, OpenClaw's official channel
+catalog has no email entry at all (3.2). OpenClaw's breadth claim holds
+only outside that named set: its own README additionally lists Google
+Chat and iMessage among its channels, neither of which #165 named and
+neither of which this check otherwise verified.
 
 The pattern: both projects would answer the same underlying question
 ("reach an agent from a phone, have it run tools, remember context")
