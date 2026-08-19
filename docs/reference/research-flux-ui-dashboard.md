@@ -2,9 +2,9 @@
 
 **Date:** 2026-08-19
 **Status:** research note, in progress: this pass covers #184 (163-01), #185
-(163-02, Capacitor deep dive) and #186 (163-03, other candidates deep dive).
-The budget/exposure comparison table (#187, 163-04) and the final
-recommendation (#188, 163-05) are still pending.
+(163-02, Capacitor deep dive), #186 (163-03, other candidates deep dive) and
+#187 (163-04, budget/exposure comparison). The final recommendation (#188,
+163-05) is still pending.
 **Sources:** primary only: official documentation and upstream repositories.
 Every claim carries its URL inline.
 
@@ -448,3 +448,92 @@ Kubeapps remains off-topic for the same reason section 1 gave: it is an
 application catalog that happens to integrate with Flux as a source, not a
 Flux status dashboard, and nothing here reopens that framing. Scope stays as
 section 1 set it.
+
+## 4. Budget and exposure comparison
+
+This section checks two questions against the four in-cluster candidates
+from sections 2 and 3 (Capacitor Next, Flux Operator Web UI, Weave GitOps,
+Radar): does a free slot cover the figure (ADR-0002), and where does the
+resulting service sit under ADR-0011's exposure default. flux9s is carried
+in the tables for completeness, but section 3.4 already settled that neither
+question applies to it: it never runs in the cluster, so there is nothing to
+charge against a slot and no ADR-0011 exposure question to ask. No candidate
+is picked here; that is #188's job (163-05).
+
+### 4.1 Memory footprint against the 2 GiB standard slot
+
+ADR-0002 sizes its **standard slot** at 2 GiB (1 GiB application, 768 MiB
+database, 256 MiB margin) and reserves **three free standard slots (6 GiB)**
+as the platform's stated growth capacity: the unit "does a free slot cover
+this" is checked against.
+
+| Candidate | Requests / limits | Fits a standard slot? |
+| --- | --- | --- |
+| Capacitor Next | 128Mi / 512Mi (§2.1) | Yes, at its limit a quarter of the slot |
+| Radar | 128Mi / 512Mi (§3.3) | Yes, same margin as Capacitor |
+| Flux Operator Web UI | 64Mi / 1Gi (§3.1) | Yes, but at its limit it alone consumes half the slot, and the figure covers the combined operator+web pod, not a web-only number: "fits" is as far as this goes |
+| Weave GitOps | not published; chart ships `resources: {}` (§3.2) | Cannot be checked: there is no figure to compare against the slot |
+| flux9s | not applicable, runs on the operator's machine, never deployed to the cluster (§3.4) | Nothing to charge against the slot |
+
+Every candidate that publishes a figure fits comfortably inside one free
+standard slot on its own, with Flux Operator Web UI the tightest fit of the
+three and the only one where the number covers more than the dashboard
+itself. Weave GitOps is the one candidate this question cannot be answered
+for: absence of a published limit is not the same finding as "it fits."
+
+### 4.2 Storage/state against ADR-0014's static-PV posture
+
+| Candidate | State | Reopens ADR-0014? |
+| --- | --- | --- |
+| Capacitor Next | stateless: one Secret-sourced config file (§2.2) | No |
+| Flux Operator Web UI | stateless: in-memory cache + ring buffer (§3.1) | No |
+| Weave GitOps | stateless: no persistence key anywhere in the chart (§3.2) | No |
+| Radar | stateless by default; an opt-in `sqlite` mode adds a 1Gi PVC (§3.3) | Only if the operator turns on `timeline.storage: sqlite`, the shipped default does not |
+| flux9s | no cluster-side state at all (§3.4) | Not applicable |
+
+None of the four in-cluster candidates reopen ADR-0014 at their default
+settings.
+
+### 4.3 Exposure under ADR-0011
+
+ADR-0011's default is explicit: "Any future, not-yet-known service defaults
+to **private** until a ticket argues it out." The two exceptions it names
+(the showcase web stacks) go public through the Cloudflare tunnel because
+they are outward-facing by design; Immich stays private-only on CVE-surface,
+proxy-limit, and ToS grounds specific to media serving. None of the four
+in-cluster Flux dashboard candidates matches either shape: each is an
+operator-facing status/administration surface over the cluster API, the same
+category Immich's Tailscale-only precedent already covers for a different
+reason, and #163's own problem statement ("what did the last reconcile do")
+is an operator question, not a family-facing one. No ticket has argued a
+public case for any of them, so ADR-0011's default, private, applies
+regardless of which candidate #188 picks. flux9s stays out of this
+subsection entirely: section 3.4 already established it has no network
+exposure surface to place behind Tailscale or a tunnel in the first place.
+
+That default gets a second, independent reason for the candidates whose
+authentication is off or absent out of the box:
+
+- **Capacitor Next**'s documented quick-start wires `noauth` straight to a
+  ClusterRole granting `apiGroups: ["*"], resources: ["*"], verbs: ["*"]`
+  (§2.3): exposing that beyond Tailscale would publish unauthenticated
+  cluster-admin.
+- **Weave GitOps** ships with both its auth mechanisms (`adminUser`,
+  `oidcSecret`) off by default (§3.2).
+- **Radar**'s default (`auth.mode: none`) is unauthenticated, though
+  read-only for GitOps actions unless `rbac.helm: true` is also set (§3.3):
+  a smaller write risk than Capacitor's, but still not a stated exception to
+  the private default.
+- **Flux Operator Web UI** is the one candidate with a documented SSO story
+  and per-action RBAC gating by default (§3.1), the strongest auth posture
+  of the four. ADR-0011's default is not conditional on auth quality ("stays
+  private until a ticket argues it out"), so this does not change the
+  recommendation, only how costly a mistake would be if the default were
+  skipped.
+
+**Recommendation: whichever in-cluster candidate #188 selects should be
+deployed private-only over Tailscale, matching Immich's posture, never
+through the Cloudflare tunnel.** This follows from ADR-0011's default
+alone, holds for all four in-cluster candidates identically, and does not
+need to be re-argued per candidate in #188. If #188 instead selects flux9s,
+this recommendation does not apply: there is nothing to expose.
