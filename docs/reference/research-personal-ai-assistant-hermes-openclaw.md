@@ -2,29 +2,40 @@
 
 **Date:** 2026-08-19
 **Status:** in progress. Covers #196 (165-01, Hermes footprint/storage/provenance,
-section 1 below) and #197 (165-02, OpenClaw's equivalent check, section 2
-below). The provider/secrets inventory (#198/165-03), use-case analysis
-(#199/165-04), a local-inference/VRAM check (#200/165-05), exposure posture
-(#201/165-06), and the final comparison and recommendation (#202/165-07) are
-follow-on tickets against this same file.
+section 1 below), #197 (165-02, OpenClaw's equivalent check, section 2 below),
+and #198 (165-03, provider integration and secrets for both, section 3
+below). Use-case analysis (#199/165-04), a local-inference/VRAM check
+(#200/165-05), exposure posture (#201/165-06), and the final comparison and
+recommendation (#202/165-07) are follow-on tickets against this same file.
 **Sources:** primary only, per this repo's `/research` convention: the
 project's own repository (`README.md`, `Dockerfile`, `docker-compose.yml`,
 `.env.example`, `hermes_state_search.py`, and the documentation site's source
 under `website/docs/` (`developer-guide/session-storage.md`,
 `user-guide/docker.md`, `user-guide/sessions.md`,
 `reference/environment-variables.md`, `reference/faq.md`,
-`getting-started/installation.md`, `getting-started/platform-support.md`),
-the project's own GitHub issue tracker for real, open and closed reports of
-measured memory and storage growth, the GitHub REST and Search APIs for the
-repository's and the `NousResearch` organization's own metadata (creation
-dates, contributor/commit counts, release cadence, security-advisories
-endpoint), the public GitHub Advisory Database API
-(`api.github.com/advisories`), the PyPI registry API and the npm registry API
-for package metadata, and `docs/adr/0002-resource-budget-and-feasibility-verdict.md`
-and `docs/adr/0014-hostpath-local-pv-no-csi.md` as the resource-budget and
-storage-abstraction precedents this section checks Hermes against. Every
-claim carries its URL inline. Figures pulled via API are timestamped to this
-check (2026-08-19); they move as the project grows.
+`getting-started/installation.md`, `getting-started/platform-support.md`,
+`integrations/providers.md`, `user-guide/messaging/index.md` and its
+per-platform pages for Telegram, Discord, Slack, WhatsApp, Signal and email,
+`user-guide/secrets/index.md`, `user-guide/features/provider-routing.md`,
+`user-guide/features/credential-pools.md`), OpenClaw's own repository and
+documentation site (`docs/providers/index.md`, `docs/providers/clawrouter.md`,
+`docs/gateway/secrets.md`, `docs/reference/secretref-credential-surface.md`,
+`docs/channels/index.md`, `docs/channels/telegram.md`, `docs/channels/discord.md`,
+`docs/channels/slack.md`, `docs/channels/whatsapp.md`,
+`docs/channels/signal.md`), the project's own GitHub issue tracker for real,
+open and closed reports of measured memory and storage growth, the GitHub
+REST and Search APIs for the repository's and the `NousResearch` and
+`openclaw` organizations' own metadata (creation dates, contributor/commit
+counts, release cadence, security-advisories endpoint), the public GitHub
+Advisory Database API (`api.github.com/advisories`), the PyPI registry API
+and the npm registry API for package metadata, and
+`docs/adr/0002-resource-budget-and-feasibility-verdict.md`,
+`docs/adr/0009-secrets-sops-age.md`, and
+`docs/adr/0014-hostpath-local-pv-no-csi.md` as the resource-budget,
+secrets-mechanism, and storage-abstraction precedents this file checks both
+candidates against. Every claim carries its URL inline. Figures pulled via
+API are timestamped to this check (2026-08-19); they move as the project
+grows.
 
 ---
 
@@ -1040,9 +1051,257 @@ recommendation, not be treated as an equivalent "provenance clear" verdict.
 
 ---
 
-Sections 1 and 2 cover #196 (165-01, Hermes) and #197 (165-02, OpenClaw).
-The provider/secrets inventory across both candidates (#198/165-03),
-use-case analysis (#199/165-04), the local-inference/VRAM check
-(#200/165-05), exposure posture (#201/165-06), and the final comparison and
+## 3. Provider integration and secrets for both
+
+This section covers #165's stories 4 (every provider key and messaging
+token, named), 5 (SOPS+age, no exception for "just a bot token"), and 9
+(does Omniroute's routing role change the calculus). Story 6 (exposure
+posture, the admin/control-surface question) is #201's (165-06) scope, not
+this one's.
+
+### 3.1 LLM provider integration: both already ship their own aggregator
+
+Both candidates connect to remote LLM providers exclusively; neither's
+provider catalog below asks for local GPU/VRAM, a question #200 (165-05)
+checks in full. What both catalogs share structurally is the fact this
+section was asked to surface: **each candidate already ships its own
+first-party, multi-provider aggregation layer**, before Omniroute enters
+the picture at all.
+
+Hermes's `integrations/providers.md` lists 28 direct, static-API-key
+providers in its "Inference Providers" table (`OPENROUTER_API_KEY`,
+`FIREWORKS_API_KEY`, `DEEPSEEK_API_KEY`, `GOOGLE_API_KEY`/`GEMINI_API_KEY`,
+`OPENAI_API_KEY`, and 23 more, each a distinct `{NAME}_API_KEY` read from
+`~/.hermes/.env`) plus 13 OAuth/subscription-based paths in the same table
+(Anthropic Claude Max, OpenAI Codex/ChatGPT, GitHub Copilot and its ACP
+variant, xAI SuperGrok, Qwen, MiniMax, Google Vertex, Azure AI Foundry, AWS
+Bedrock, Ollama Cloud, Nous Portal itself, and a custom-endpoint escape
+hatch)
+(<https://raw.githubusercontent.com/NousResearch/hermes-agent/main/website/docs/integrations/providers.md>).
+Ahead of all of those, the same page names **Nous Portal** as "the
+recommended way to run Hermes Agent": "one OAuth login covers 300+ frontier
+agentic models (Claude, GPT, Gemini, DeepSeek, Qwen, Kimi, GLM, MiniMax,
+Grok, ...) plus the Tool Gateway ... billed against your Nous subscription
+instead of separate per-provider accounts" (same source, "Nous Portal"
+section). That is Hermes's own answer to exactly the problem Omniroute
+solves for a bare Claude-Code consumer (#164's own framing): one login, one
+bill, many providers, run by the same organization that ships the agent.
+
+OpenClaw's `docs/providers/index.md` links a comparable catalog under
+`provider/model` naming; the underlying `docs/providers/` directory holds
+68 individual provider pages, checked via the repository's own Git tree API
+(<https://api.github.com/repos/openclaw/openclaw/git/trees/main?recursive=1>),
+against the index page itself
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/docs/providers/index.md>).
+Ahead of that catalog sits **ClawRouter**, "the bundled `clawrouter` plugin"
+(`enabledByDefault: true`), giving "one policy-scoped key for multiple
+upstream model providers": "you never install or authenticate each upstream
+provider plugin on the OpenClaw host"
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/docs/providers/clawrouter.md>).
+Its default origin, `https://clawrouter.openclaw.ai`, is a hosted service
+run by the OpenClaw org itself, structurally the same "vendor's own
+first-party router" shape as Hermes's Nous Portal, not a third-party
+integration OpenClaw merely documents.
+
+Neither project's docs found in this check name Omniroute, OmniRoute, or
+reference it as a tested integration target. Both do support pointing a
+direct provider connection at an arbitrary base URL: Hermes's `OpenAI API
+(direct)` entry names an "optional `OPENAI_BASE_URL`" override (the
+`integrations/providers.md` table cited above), and OpenClaw's own
+provider config shape takes a `baseUrl` per provider (demonstrated by the
+`clawrouter` provider's own `models.providers.clawrouter.baseUrl` field,
+`docs/providers/clawrouter.md` "Managed non-interactive deployment"
+section). Mechanically, routing either candidate through Omniroute would
+mean reusing that generic base-URL override on one of the existing direct
+provider slots (Hermes: `openai-api`; OpenClaw: any OpenAI-compatible
+provider entry), the same mechanism #164's own research doc found Claude
+Code itself uses against Omniroute via `ANTHROPIC_BASE_URL`
+(`research-omniroute-ai-gateway.md` section 6.3). Neither candidate has a
+documented, named Omniroute integration path the
+way each has one for OpenRouter (both list `OPENROUTER_API_KEY` /
+`openrouter` as a first-class, first-party-documented provider) — a real,
+if generic, mechanical fit, not a tested one.
+
+### 3.2 Messaging-platform token inventory (#165 story 4)
+
+Every credential either candidate needs for the five platforms #165 names
+by name (Telegram, Discord, Slack, WhatsApp, Signal), plus email as the
+sixth "email-class" channel it also names:
+
+| Platform | Hermes (env var, `reference/environment-variables.md`) | OpenClaw (config path, `secretref-credential-surface.md`) | Shape |
+| --- | --- | --- | --- |
+| Telegram | `TELEGRAM_BOT_TOKEN` (from @BotFather) | `channels.telegram.botToken` / `channels.telegram.webhookSecret` | Static bot token, BotFather-issued |
+| Discord | `DISCORD_BOT_TOKEN` | `channels.discord.token` | Static bot token, Developer Portal-issued |
+| Slack | `SLACK_BOT_TOKEN` (bot token) + `SLACK_APP_TOKEN` (app-level token, Socket Mode) | `channels.slack.botToken` / `.appToken` / `.userToken` / `.signingSecret` | Static tokens, Slack app manifest-issued |
+| WhatsApp | none — Baileys bridge, QR-linked session saved under `~/.hermes/platforms/whatsapp/session` | none — `channels.whatsapp.creds.json` is explicitly **excluded** from the SecretRef surface | QR-linked device session, not a static secret |
+| Signal | none — `SIGNAL_HTTP_URL`/`SIGNAL_ACCOUNT` point at an external `signal-cli` daemon the operator runs and links separately | none — Signal has **no entries at all** in the SecretRef credential surface | External `signal-cli` linked-device session, not a credential either project stores |
+| Email | `EMAIL_ADDRESS` + `EMAIL_PASSWORD` (IMAP/SMTP app password) | **no email channel exists** — absent from the official channel catalog entirely | Static app-password credential (Hermes only) |
+
+Sources: Hermes's messaging env-var block
+(<https://raw.githubusercontent.com/NousResearch/hermes-agent/main/website/docs/reference/environment-variables.md>,
+"Messaging" section) and its own WhatsApp/Signal setup guides
+(<https://raw.githubusercontent.com/NousResearch/hermes-agent/main/website/docs/user-guide/messaging/whatsapp.md>,
+<https://raw.githubusercontent.com/NousResearch/hermes-agent/main/website/docs/user-guide/messaging/signal.md>);
+OpenClaw's canonical, CI-checked SecretRef list
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/docs/reference/secretref-credential-surface.md>),
+its own official channel catalog
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/docs/channels/index.md>),
+and its WhatsApp/Signal channel docs
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/docs/channels/whatsapp.md>,
+<https://raw.githubusercontent.com/openclaw/openclaw/main/docs/channels/signal.md>).
+
+The pattern that matters for #165's story 4 and story 5 together: three of
+the five named platforms (Telegram, Discord, Slack) are ordinary static
+secrets on both candidates, a SOPS+age Secret's natural shape. The other
+two (WhatsApp, Signal) are **not** credentials either project stores as a
+discrete secret value at all — they are linked-device session state,
+persisted as files (a Baileys session directory, or an external
+`signal-cli` account/daemon), something #165 itself did not distinguish
+from "a token" when it grouped all five platforms together in story 4.
+Both project's own docs confirm the QR/link model directly: Hermes's guide
+says "Your session is saved automatically" after scanning
+(`user-guide/messaging/whatsapp.md`, "Quick setup"), and OpenClaw's says
+"Login is QR-only... The gateway owns the linked session(s)"
+(`docs/channels/whatsapp.md`, "Quick setup" / summary). Neither is
+something a `secrets configure` / SOPS workflow resolves the same way a
+bot token does; both need the *session file itself* protected, which is a
+storage-permissions question (the data PV, section 1.2/2.2 in this file),
+not a Kubernetes-Secret question.
+
+### 3.3 Each candidate's own secrets architecture
+
+Both candidates ship a secret-injection system of their own, ahead of and
+independent from whatever this platform layers on top with SOPS+age.
+
+**Hermes** keeps every credential in a flat `~/.hermes/.env` file by
+default, and can optionally pull values from an external manager at
+startup instead: "Hermes can pull API keys from external secret managers
+at process startup instead of storing them in `~/.hermes/.env`. The
+bootstrap token for the secret manager lives in `.env`; every other
+provider key ... can stay in the manager and rotate centrally." Three
+backends ship in-tree: Bitwarden Secrets Manager, 1Password (`op://`
+references), and a generic command helper wrapping any CLI vault
+(`keepassxc-cli`, `secret-tool`, `pass`, custom scripts). A deterministic
+precedence ladder governs when a source is allowed to overwrite an
+existing `.env`/shell value
+(<https://raw.githubusercontent.com/NousResearch/hermes-agent/main/website/docs/user-guide/secrets/index.md>).
+Absent one of those three backends, every credential in the table above
+(and every LLM-provider key from 3.1) sits as plaintext in `.env` on the
+same `/opt/data` volume section 1.2 already flagged for the FTS5 database.
+
+**OpenClaw** has a more structured but similarly shaped contract: a single
+`SecretRef` object shape, `{ source: "env" | "file" | "exec" | "store", provider, id }`,
+usable on every field listed in `secretref-credential-surface.md`'s
+"Supported credentials" table (including `channels.telegram.botToken`,
+`channels.slack.botToken`, `channels.discord.token`, and every
+`models.providers.*.apiKey`)
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/docs/gateway/secrets.md>,
+"SecretRef contract" section). The `store` source is OpenClaw's own
+built-in vault, a Gateway-wide table in the same `state/openclaw.sqlite`
+section 2.2 already covers — and its own docs carry an explicit warning
+that mirrors Omniroute's own gap in `research-omniroute-ai-gateway.md`
+section 3.3: "Store values are not encrypted at rest. They are stored
+unencrypted in the shared state SQLite database ... protected by the same
+`0600` file and `0700` directory permissions as other credentials in that
+database" (same source, "Shared secret store" section). The `env` source
+is the one that maps directly onto a Kubernetes Secret; the `exec` source
+is the same "arbitrary CLI vault" shape as Hermes's command-helper backend
+(that section's own worked example is a Vault-shaped resolver script).
+
+### 3.4 SOPS+age boundary translation (ADR-0009)
+
+ADR-0009 settles the mechanism (SOPS+age, `docs/adr/0009-secrets-sops-age.md`,
+"Decision" section); `workloads/immich/secrets/immich-postgres.sops.yaml`,
+consumed via `valueFrom.secretKeyRef` per variable, is this repo's own
+concrete precedent, the same one both #164's Omniroute research
+(section 3.6) and this file's sections 1.2/2.2 already point to for
+storage. Translating that shape onto both candidates:
+
+- **What fits cleanly, for both candidates**: every static credential in
+  3.2's table (Telegram/Discord/Slack tokens), and every static
+  provider-API-key from 3.1 (Hermes's 28 `{NAME}_API_KEY` variables read
+  from `.env`; OpenClaw's `models.providers.*.apiKey` fields, each
+  SecretRef-eligible against an `env` source) all resolve the same way
+  Omniroute's four required app secrets did: one SOPS-encrypted `Secret`
+  manifest per workload, `env`/`envFrom`-injected into the container, and
+  (Hermes) referenced by the plain env var name in `.env`, or (OpenClaw)
+  referenced by an explicit `{source: "env", provider: "default", id: "..."}`
+  SecretRef in `openclaw.json`.
+- **What doesn't fit as a Secret manifest at all, for both candidates**:
+  the WhatsApp/Signal session state from 3.2. That state is a directory of
+  files (Hermes) or a linked-device credential OpenClaw's own SecretRef
+  surface explicitly excludes (`channels.whatsapp.creds.json`, "Unsupported
+  credentials" in `secretref-credential-surface.md`) and Signal isn't
+  listed in at all. This is not a SOPS+age gap; it is the same class of
+  fact ADR-0014's static-PV model already covers (section 1.2/2.2 in this
+  file), and needs the data volume itself treated as secret-adjacent
+  storage, the same conclusion #164's own research reached for
+  OmniRoute's `provider-credentials.json` path
+  (`research-omniroute-ai-gateway.md` section 3.6).
+- **What's a residual gap either way**: Hermes's plaintext `.env` absent a
+  secret-source plugin, and OpenClaw's unencrypted `store` SQLite table
+  absent routing through `env`/`file`/`exec` instead. Both are avoidable
+  by construction — Hermes by choosing the `env` var itself as the sole
+  path (skip its own secret-source plugins, since SOPS+age already
+  centralizes rotation) and populating `.env` from the mounted Secret at
+  container start; OpenClaw by using `env`-source SecretRefs exclusively
+  and never writing a credential through `secrets store` (the CLI/Control
+  UI path that lands in the unencrypted SQLite table). Neither candidate's
+  docs suggest one path is "wrong," but this platform's own SOPS+age
+  standard argues for the `env`-only path on both, the same choice
+  Omniroute's own research doc reached for `STORAGE_ENCRYPTION_KEY`
+  (section 3.6, treating it as required for this deployment even though
+  upstream calls it optional).
+
+### 3.5 Omniroute's routing role, weighed against each candidate's own aggregator
+
+#165's story 9 asks whether using either candidate through Omniroute
+changes the cost/footprint calculus, and #164's own research doc (164-07,
+section 6.5) left this exact question open, pending #165: "a 'yes' for
+OmniRoute at all requires a 'yes, and it doesn't need Claude-quality
+output' from #165 first," since section 6.2 of that doc already found
+Anthropic/Claude absent from Omniroute's free-tier pool entirely, so
+whatever value Omniroute has left rests on Hermes/OpenClaw needing the
+non-Claude models that make up nearly all of that pool
+(`research-omniroute-ai-gateway.md` sections 6.2 and 6.5).
+
+What 3.1 adds to that open question changes its shape further: Omniroute
+would not be introducing aggregation where none existed, the way it does
+for a bare Claude-Code consumer. Both candidates already have a
+first-party answer to the same problem — Nous Portal for Hermes,
+ClawRouter for OpenClaw — each run by the same organization that ships the
+agent, each already covering multiple providers (including Claude, via
+subscription-billed OAuth, not Omniroute's free pool) under one
+credential. Layering Omniroute on top would be a *second* aggregation
+layer, not the first, and neither project's own docs found in this check
+name Omniroute as a tested or recommended integration target. Mechanically
+possible (base-URL override on an existing direct-provider slot, 3.1), but
+not a documented path either upstream project stands behind.
+
+One mechanism 164-07's section 6.5 flagged but did not chase down is worth
+naming here because it bears directly on Hermes/OpenClaw specifically:
+Omniroute's own README describes a "Tier 1 Subscription (Claude Code,
+Codex, Copilot)" routing tier and a "Quota-Share routing" feature that
+could, in principle, let Omniroute serve Hermes or OpenClaw traffic off an
+already-authenticated Claude Code subscription session at flat-fee rates
+rather than metered ones — but 164-07's own section 2.3 already ruled out
+the Docker profile (`cli`/`host`) that mechanism would need for this
+platform ("nothing on this platform needs OmniRoute to run a coding-agent
+CLI *inside* its own container"), leaving the `base` profile that section
+actually recommends without that path. Whether that gap is disqualifying
+or just unused depends on which specific provider access either candidate
+ends up needing, a question #199 (165-04, use-case analysis) resolves, not
+this section; this section's contribution is naming that "aggregator" is
+not the axis Omniroute would be filling for either candidate the way it is
+for a Claude-Code-only deployment, and that the one cost-saving mechanism
+that could still matter here is already blocked by this platform's own
+deployment-shape choice, not by Hermes or OpenClaw.
+
+---
+
+Sections 1 through 3 cover #196 (165-01, Hermes), #197 (165-02, OpenClaw),
+and #198 (165-03, provider integration and secrets for both). Use-case
+analysis (#199/165-04), the local-inference/VRAM check (#200/165-05),
+exposure posture (#201/165-06), and the final comparison and
 recommendation (#202/165-07) are all follow-on tickets against this same
 file.
