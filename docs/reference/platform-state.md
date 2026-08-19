@@ -1,8 +1,9 @@
 # Platform state: invariants
 
 What "the base platform is up" means. Each invariant below is owned by one
-role's `--tags verify` tasks — this page is an index into them, not a
-second copy of what they check. Run all eight at once:
+role's `--tags verify` tasks, except the ninth's second half (a manual
+wizard, noted there) — this page is an index into them, not a second copy
+of what they check. Run every automated check at once:
 
 ```
 ansible-playbook ansible/site.yml --tags verify -l <host>
@@ -42,6 +43,23 @@ it runs, not committed to a doc that immediately goes stale.
    is proven against what the platform actually depends on, not a direct
    `:9100/metrics` curl that a stuck scrape target would still pass.
    `node-exporter` role, `--tags verify`.
+9. **Wildcard cert issued and not expiring; smoke hostname reachable
+   through the tunnel.** Two halves, two owners (ADR-0011, 162-06/#183):
+   - Traefik's ACME wildcard cert (`*.<domain>`) is issued and has more
+     than 14 days left, proven the same way invariant 8 proves its own
+     metric — an instant query against VictoriaMetrics for
+     `traefik_tls_certs_not_after`, the series `CertificateExpiringSoon`
+     already alerts on (ADR-0018,
+     `workloads/observability/vmalert-configmap.yaml`), not by parsing
+     Traefik's `acme.json` directly. `k3s` role, `--tags verify` (skips
+     quietly until `k3s_traefik_domain`/`k3s_traefik_acme_email` are set,
+     the same gate the HelmChartConfig templating task already uses).
+   - The throwaway smoke hostname resolving Cloudflare Tunnel → Traefik →
+     `workloads/smoke`'s backend end to end has no committed hostname to
+     check against — it's a real designator (ADR-0015) picked ad hoc in
+     the Cloudflare dashboard, not a value any role's `--tags verify` task
+     can read. Proven by hand instead: `scripts/ingress-smoke-setup`'s own
+     Stage 3.
 
 ## Known gap: three components outside GitOps
 
