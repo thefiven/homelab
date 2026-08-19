@@ -1,10 +1,9 @@
 # Flux GitOps UI dashboard: worth adding, and if so which one
 
 **Date:** 2026-08-19
-**Status:** research note, in progress: this pass covers #184 (163-01), #185
-(163-02, Capacitor deep dive), #186 (163-03, other candidates deep dive) and
-#187 (163-04, budget/exposure comparison). The final recommendation (#188,
-163-05) is still pending.
+**Status:** complete. Covers #184 (163-01), #185 (163-02, Capacitor deep
+dive), #186 (163-03, other candidates deep dive), #187 (163-04,
+budget/exposure comparison) and #188 (163-05, recommendation, section 5).
 **Sources:** primary only: official documentation and upstream repositories.
 Every claim carries its URL inline.
 
@@ -537,3 +536,78 @@ through the Cloudflare tunnel.** This follows from ADR-0011's default
 alone, holds for all four in-cluster candidates identically, and does not
 need to be re-argued per candidate in #188. If #188 instead selects flux9s,
 this recommendation does not apply: there is nothing to expose.
+
+## 5. Recommendation
+
+**Adopt flux9s (§3.4) as a local tool. Deploy no in-cluster dashboard.**
+
+#163's problem statement is "no visual surface... short of reading CLI
+output" for an operator already running `flux`/`kubectl` from their own
+machine against the cluster's kubeconfig. flux9s answers exactly that: a
+real-time, k9s-style view over Flux's `Kustomization`/`HelmRelease`
+reconcile state, dependency graphs, and suspend/resume/reconcile actions,
+launched read-only by default (§3.4). It clears every axis #163 asked about
+by not needing to answer them: no Deployment means no figure to weigh
+against ADR-0002's standard slot (§4.1), no cluster-side state means no
+ADR-0014 question (§4.2), and nothing listens on the network means no
+ADR-0011 exposure decision (§4.3): no ticket, no Tailscale entry, no
+tunnel. It runs on the operator's own credentials, so it adds no new
+ServiceAccount or RBAC surface beyond what `kubectl` already has today. It
+is not currently installed on the machine that manages this cluster; that
+install is the one action item this ticket produces, and it is a `cargo
+install`/`brew`/binary step, not a change to `workloads/`.
+
+None of the four in-cluster web dashboards clears the bar of "worth
+deploying now":
+
+- **Capacitor Next** is ruled out by a fact this research surfaced that
+  wasn't visible when #163 named it as the starting candidate: self-hosting
+  now requires a `LICENSE_KEY` gated behind contacting the founder directly,
+  framed as a beta with beta testers wanted, and no pricing or terms
+  published anywhere (§2.3). Its published memory figure and stateless
+  design are otherwise the best in class, but running production
+  infrastructure on an undocumented, vendor-gated license for a single-file
+  home-lab convenience is a cost this ticket's own scope (lowest priority of
+  this round, per #163's Further Notes) does not justify taking on.
+- **Weave GitOps** is ruled out on currency alone: no commits since
+  2026-01-25, seven months of silence at the time of this research despite
+  the repository's own "transitioning to a community driven project"
+  banner (§3.2), no published memory figure, and no safe unauthenticated
+  default. Adopting a dormant project for a convenience feature is the wrong
+  trade in either direction.
+- **Radar** is the youngest in-cluster candidate (repository created seven
+  months before this research, §3.3) and ships unauthenticated by default;
+  it is read-only for GitOps write actions in that default (§3.3, §4.3),
+  which is a real mitigation, but "unauthenticated-by-default, seven months
+  old, single-maintainer-dominated" is not a combination worth taking on for
+  a convenience this ticket already calls lowest priority.
+- **Flux Operator Web UI** is the strongest in-cluster candidate by every
+  axis measured here: the best-documented auth model of any candidate
+  (per-action RBAC gating, SSO, a published transparency page naming every
+  privileged operation, §3.1), the most active maintenance (weekly
+  releases, 31 contributors, §3.1), and a figure that fits the standard
+  slot even as an upper bound. It is not recommended *now* because taking it
+  means adopting Flux Operator as the mechanism that installs and manages
+  Flux itself: first-class support requires it, and the workaround is
+  explicitly unsupported (§3.1), which reopens ADR-0008's plain-CLI
+  bootstrap decision. That is a materially bigger change than "add a UI
+  workload," and this ticket's mandate ("no decision is made here about
+  deploying it," per #163's Implementation Decisions) does not extend to
+  reopening a settled ADR. **This is the candidate to revisit first** if a
+  later ticket decides a persistent, multi-operator, browser-accessible
+  dashboard is worth the ADR-0008 reopening: its auth model and
+  maintenance cadence are not in question, only the coupling cost.
+
+**What flux9s-and-nothing-else gives up:** a persistent, browser-accessible,
+multi-operator view (no value today, with a single operator already holding
+SSH/kubeconfig access); push-style always-on visibility versus an on-demand
+terminal session; and a mobile-friendly surface, which only Flux Operator
+Web UI documents at all (§1). None of these are gaps #163's problem
+statement named. **What it keeps:** the entire budget, storage, and
+exposure questions sections 4.1-4.3 spent real research effort answering
+stay moot, because there is nothing deployed to answer them about.
+
+**Revisit if:** a second regular operator needs cluster visibility without
+their own kubeconfig, or the need shifts from "what failed" to "show this on
+a shared/mobile screen." At that point Flux Operator Web UI is the
+candidate to re-open, priced against reopening ADR-0008.
