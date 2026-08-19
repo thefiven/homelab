@@ -1,0 +1,13 @@
+# Fronts smoke-whoami (deployment.yaml) for ingress.yaml's Ingress to point
+# at (162-04, #181).
+apiVersion: v1
+kind: Service
+metadata:
+  name: smoke-whoami
+  namespace: default
+spec:
+  selector:
+    app: smoke-whoami
+  ports:
+    - port: 80
+      targetPort: 80
