@@ -1,0 +1,77 @@
+# cloudflared, the outbound tunnel connector (#180, ADR-0011). A remotely
+# managed Tunnel: TUNNEL_TOKEN (cloudflare-tunnel-token secret, #179) is all
+# it needs to connect out and fetch its own config (public hostname to
+# origin routing) from the Cloudflare dashboard, no config.yaml or
+# credentials.json in this repo. That per-hostname routing is #181's job,
+# not this one: this Deployment only proves the connector itself runs and
+# authenticates.
+#
+# Image pinned to a manifest-list digest for linux/amd64, resolved from
+# cloudflare/cloudflared:2026.8.2 (latest stable, 2026-08-14; 2026.8.1 was
+# pulled by Cloudflare the same week) via the Docker Hub registry API.
+#
+# replicas: 1. Cloudflare's own deployment guide recommends 2 for HA, but
+# that buys nothing on this platform's single k3s server (ADR-0007,
+# docs/reference/platform-state.md invariant 2) beyond two pods racing to
+# reconnect on the same node. ponytail: revisit if a second node ever
+# joins the cluster.
+#
+# --metrics 0.0.0.0:2000 + the /ready liveness probe is cloudflared's own
+# documented health check (developers.cloudflare.com/cloudflare-one/
+# networks/connectors/cloudflare-tunnel/deployment-guides/kubernetes/):
+# /ready only turns healthy once the tunnel has an active edge connection,
+# so a token that fails to authenticate gets restarted instead of sitting
+# up but disconnected. failureThreshold: 1 (steeper than this repo's other
+# Deployments' default of 3) is that same upstream example verbatim: a
+# disconnected tunnel is cheap and safe to restart immediately, unlike a
+# slow-starting app where a false positive costs real startup work. No
+# Service: nothing in-cluster talks to cloudflared, it only dials out.
+#
+# No securityContext/sysctls for ICMP (Cloudflare's ping_group_range
+# example): that only matters for proxying a private network's ICMP
+# traffic through the tunnel, which nothing here does. Nothing but
+# Traefik's Service is ever the origin.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  namespace: ingress
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cloudflared
+  template:
+    metadata:
+      labels:
+        app: cloudflared
+    spec:
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:2026.8.2@sha256:de55830499e9adb1c580f7b5cbbdef86a3ff1715fb3ae6b3ff242f19de0afde8
+          args:
+            - tunnel
+            - --no-autoupdate
+            - --loglevel
+            - info
+            - --metrics
+            - 0.0.0.0:2000
+            - run
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cloudflare-tunnel-token
+                  key: TUNNEL_TOKEN
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: 2000
+            failureThreshold: 1
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: 64Mi
+            limits:
+              memory: 64Mi

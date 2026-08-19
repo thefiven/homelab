@@ -4,10 +4,11 @@
 # a namespaced object below before this Namespace, so it has to exist
 # regardless, or that apply fails with "namespaces \"ingress\" not found" on
 # every reconcile (same reasoning as workloads/backup/namespace.yaml). Only
-# the Tunnel token secret (#179) lives in this namespace; the Cloudflare API
-# token secret lives in kube-system instead, matching where Traefik's own
-# pod runs (#178): a Secret's secretKeyRef must share its consumer's
-# namespace, and Traefik is a k3s-managed AddOn, not a workload here.
+# the Tunnel token secret (#179) and the cloudflared Deployment that reads
+# it (#180) live in this namespace; the Cloudflare API token secret lives
+# in kube-system instead, matching where Traefik's own pod runs (#178): a
+# Secret's secretKeyRef must share its consumer's namespace, and Traefik is
+# a k3s-managed AddOn, not a workload here.
 apiVersion: v1
 kind: Namespace
 metadata:
