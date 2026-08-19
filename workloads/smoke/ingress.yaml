@@ -1,0 +1,37 @@
+# Catch-all route: no `host` on the rule, and `tls: [{}]` asks for TLS
+# without naming a domain or a secretName (162-04, #181, ADR-0011). #178's
+# HelmChartConfig already made the wildcard cert (main + *.<domain>) and
+# certResolver: cloudflare the websecure entrypoint's own defaults
+# (ansible/roles/k3s/templates/traefik-config.yaml.j2), so any router on
+# that entrypoint asking for TLS gets both without repeating them.
+#
+# That's not a shortcut, it's the only option: no real domain is bought yet
+# (k3s_traefik_domain has no default, ansible/roles/k3s/defaults/main.yml),
+# so this manifest has no literal hostname to put in a `host:`/`tls.hosts:`
+# field. Whatever throwaway public hostname scripts/ingress-smoke-setup's
+# wizard picks in the Cloudflare Tunnel dashboard reaches Traefik with that
+# Host header; TLS still terminates correctly because Traefik selects the
+# entrypoint's default wildcard cert by SNI before any routing lookup
+# happens. With neither web stack's own Ingress registered yet (#162, out
+# of scope here), this catch-all is the only router and answers every host.
+# A future host-specific Ingress simply out-prioritizes this one in
+# Traefik's own router matching, no coordination needed.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: smoke-whoami
+  namespace: default
+spec:
+  ingressClassName: traefik
+  tls:
+    - {}
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: smoke-whoami
+                port:
+                  number: 80
