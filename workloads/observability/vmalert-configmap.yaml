@@ -120,12 +120,17 @@ data:
                 minutes, past Kingston's warranted operating ceiling
                 (ADR-0017).
 
-      # ADR-0004's fourth category. Dormant by construction: the ingress
-      # spec that scrapes Traefik has not shipped (#160's scope note), so
-      # `traefik_tls_certs_not_after` has no series to evaluate and this
-      # rule never fires until that metric exists. 14 days of lead time on
-      # a gauge documented as "the expiration date of certificates" (Unix
-      # timestamp) is this rule's own implementation choice.
+      # ADR-0004's fourth category. Was dormant by construction (#160's scope
+      # note: the ingress spec that scrapes Traefik hadn't shipped yet, so
+      # `traefik_tls_certs_not_after` had no series to evaluate). The scrape
+      # job landed in victoriametrics-configmap.yaml (162-06/#183), so the
+      # series exists as soon as Traefik holds any certificate — this rule
+      # only stays quiet now for the separate reason that no domain is
+      # configured yet either (k3s_traefik_domain has no default,
+      # ansible/roles/k3s/defaults/main.yml), so Traefik holds no ACME cert
+      # to report on. 14 days of lead time on a gauge documented as "the
+      # expiration date of certificates" (Unix timestamp) is this rule's own
+      # implementation choice.
       - name: certificate
         rules:
           - alert: CertificateExpiringSoon

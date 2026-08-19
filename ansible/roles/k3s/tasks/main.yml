@@ -247,3 +247,60 @@
     quiet: true
   when: k3s_role == 'server'
   tags: verify
+
+# `--tags verify`: proves the cert half of platform-state.md's ninth
+# invariant (162-06/#183) — "the wildcard cert is issued and not expiring"
+# — the same way node-exporter's own verify task proves the eighth
+# (ansible/roles/node-exporter/tasks/main.yml): an instant query against
+# VictoriaMetrics's own API for the metric the platform already depends on
+# (`traefik_tls_certs_not_after`, the series CertificateExpiringSoon alerts
+# on, workloads/observability/vmalert-configmap.yaml, ADR-0018), not by
+# parsing Traefik's acme.json directly, a file this role has never mounted.
+#
+# Gated on the same domain/email condition as the HelmChartConfig
+# templating task above, but inlined rather than read from
+# k3s_traefik_acme_configured: that fact is set by a task with no `verify`
+# tag, so it would be undefined on a `--tags verify`-only run. No
+# `k3s_role | default('')` guard either (unlike node-exporter's copy of
+# this pattern): this role's own "Assert that k3s_role is set" task above
+# is tagged `always`, so k3s_role is guaranteed defined here even on a
+# verify-only run.
+- name: Query VictoriaMetrics for Traefik's certificate-expiry metric
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - --raw
+      - /api/v1/namespaces/observability/services/victoriametrics:8428/proxy/api/v1/query?query=traefik_tls_certs_not_after
+  register: k3s_traefik_cert_query
+  changed_when: false
+  check_mode: false
+  when: >-
+    k3s_role == 'server'
+    and (k3s_traefik_domain | default('', true) | length > 0)
+    and (k3s_traefik_acme_email | default('', true) | length > 0)
+  tags: verify
+
+# 14 days, matching CertificateExpiringSoon's own threshold
+# (vmalert-configmap.yaml) rather than a second, independently-chosen
+# number for the same fact.
+- name: Assert the wildcard certificate is issued and not expiring
+  ansible.builtin.assert:
+    that:
+      - (k3s_traefik_cert_query.stdout | from_json).status == 'success'
+      - (k3s_traefik_cert_query.stdout | from_json).data.result | length > 0
+      - >-
+        (k3s_traefik_cert_query.stdout | from_json).data.result
+        | map(attribute='value') | map('last') | map('float')
+        | select('lt', (ansible_date_time.epoch | int) + (14 * 86400))
+        | list == []
+    fail_msg: >-
+      Traefik's wildcard certificate is missing or expires within 14 days:
+      {{ k3s_traefik_cert_query.stdout }}
+    quiet: true
+  when: >-
+    k3s_role == 'server'
+    and (k3s_traefik_domain | default('', true) | length > 0)
+    and (k3s_traefik_acme_email | default('', true) | length > 0)
+  tags: verify

@@ -1,18 +1,20 @@
 # VictoriaMetrics's own scrape config (`-promscrape.config`, ADR-0004:
 # "self-scraping ... VictoriaMetrics scrapes Prometheus-format targets on
 # its own", removing the separate collector a Prometheus-based stack would
-# need). One target class today: node_exporter (#166), the source both
-# ADR-0017's thermal alert and ADR-0004's disk-near-full alert need.
+# need). Two target classes: node_exporter (#166), the source both
+# ADR-0017's thermal alert and ADR-0004's disk-near-full alert need, and
+# Traefik (162-06/#183), the source of `traefik_tls_certs_not_after` that
+# CertificateExpiringSoon (vmalert-configmap.yaml, ADR-0018) has been
+# alerting on dormant series since #167.
 #
-# Discovered via the Kubernetes API (`kubernetes_sd_configs`, role: node),
-# not a static target on a literal IP: ADR-0015 never lets a real
-# designator land in a tracked file, and the Node object's own address,
-# read from the API at scrape time, is exactly the value that would
-# otherwise have to be hand-written here. No `api_server`/`tls_config` is
-# set: with neither given, VictoriaMetrics falls back to the in-cluster
-# config every pod gets for free (the mounted ServiceAccount token and CA,
-# victoriametrics-rbac.yaml's grant), the same default Prometheus itself
-# documents.
+# Discovered via the Kubernetes API (`kubernetes_sd_configs`), not a static
+# target on a literal IP: ADR-0015 never lets a real designator land in a
+# tracked file, and the API's own live objects are exactly the values that
+# would otherwise have to be hand-written here. No `api_server`/`tls_config`
+# is set on either job: with neither given, VictoriaMetrics falls back to
+# the in-cluster config every pod gets for free (the mounted ServiceAccount
+# token and CA, victoriametrics-rbac.yaml's grant), the same default
+# Prometheus itself documents.
 #
 # role: node's discovery sets `__address__` to `<node-address>:10250`, the
 # kubelet's port; node_exporter listens on 9100 instead (the Debian package
@@ -42,4 +44,36 @@ data:
             target_label: __address__
             replacement: '${1}:9100'
           - source_labels: [__meta_kubernetes_node_name]
+            target_label: instance
+      # role: pod, not role: endpoints: Traefik's Service
+      # (k3s's own kube-system/traefik) only publishes web/websecure as
+      # Service ports, never the metrics one (the chart's own default,
+      # ports.metrics.expose.default: false) — nothing for role: endpoints
+      # to key off. The pod's own metrics container port (9100, Traefik's
+      # chart default) is reachable directly at its pod IP regardless, same
+      # as any other in-cluster address.
+      #
+      # role: pod emits one SD entry per container port (node1's own
+      # traefik pod carries four: web, websecure, traefik, metrics), so the
+      # container-port-name keep below runs before the address rewrite:
+      # without it, all four entries survive the label-name filter and get
+      # rewritten to the same `<pod-ip>:9100`, one job scraping the same
+      # target four times over instead of once.
+      - job_name: traefik
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [kube-system]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+            regex: traefik
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            regex: metrics
+            action: keep
+          - source_labels: [__address__]
+            regex: '(.+):\d+'
+            target_label: __address__
+            replacement: '${1}:9100'
+          - source_labels: [__meta_kubernetes_pod_name]
             target_label: instance

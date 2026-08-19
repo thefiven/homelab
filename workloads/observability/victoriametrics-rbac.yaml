@@ -11,6 +11,14 @@
 # directly; it does not proxy through the API server the way scraping
 # kubelet/cAdvisor metrics would, so no `nodes/metrics` or `nodes/proxy`
 # permission is added for a scrape path this config doesn't use.
+#
+# `pods` added alongside `nodes` (162-06/#183): the Traefik scrape job in
+# victoriametrics-configmap.yaml discovers via role: pod (Traefik's Service
+# has no `metrics` port, only web/websecure, so role: endpoints has nothing
+# to key off; the pod IP itself is directly reachable in-cluster) — the
+# same client, same ServiceAccount, needs list/watch on Pod objects too, or
+# that job fails discovery the same way node discovery would without the
+# grant above.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -18,14 +26,19 @@ metadata:
   namespace: observability
 ---
 # Cluster-scoped, not a namespaced Role: Node objects aren't namespaced
-# either, so a Role/RoleBinding pair has nothing to bind against.
+# either, so a Role/RoleBinding pair has nothing to bind against. Pods are
+# namespaced, but kept in this same ClusterRole rather than split into a
+# second Role/RoleBinding scoped to kube-system: one binding for one
+# ServiceAccount's two discovery needs is less to track than two, and
+# nothing here is more sensitive cluster-wide than it already is namespaced
+# (get/list/watch, no write verbs either way).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: victoriametrics-node-discovery
 rules:
   - apiGroups: [""]
-    resources: ["nodes"]
+    resources: ["nodes", "pods"]
     verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
