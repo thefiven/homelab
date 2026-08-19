@@ -1,16 +1,19 @@
 # OmniRoute AI gateway: resource footprint and whether it's worth running here
 
 **Date:** 2026-08-19
-**Status:** in progress. Covers #189 (164-01, resource footprint — section 1
-below). Deployment shape (#190, 164-02), secrets inventory (#191, 164-03),
-provenance check (#192, 164-04), exposure posture (#193, 164-05),
-cost/routing impact (#194, 164-06), and the recommendation (#195, 164-07)
-are follow-on tickets.
+**Status:** in progress. Covers #189 (164-01, resource footprint, section 1
+below) and #190 (164-02, deployment shape, section 2 below). Secrets
+inventory (#191, 164-03), provenance check (#192, 164-04), exposure posture
+(#193, 164-05), cost/routing impact (#194, 164-06), and the recommendation
+(#195, 164-07) are follow-on tickets.
 **Sources:** primary only, per this repo's `/research` convention: the
 project's own repository (`docker-compose.yml`, `Dockerfile`,
-`docs/reference/ENVIRONMENT.md`, `docs/architecture/cluster-decisions.md`),
-its README, and its own GitHub issue tracker for real, closed reports of
-measured memory use. Every claim carries its URL inline.
+`docs/reference/ENVIRONMENT.md`, `docs/architecture/cluster-decisions.md`,
+`docs/guides/DOCKER_GUIDE.md`, `docs/guides/SETUP_GUIDE.md`), its README,
+its own GitHub issue tracker for real, closed reports of measured memory
+use, and this repository's own existing `workloads/` manifests
+(`workloads/immich/`) as the deployment precedent being compared against.
+Every claim carries its URL inline.
 
 ---
 
@@ -148,8 +151,131 @@ app container in 1.2.
 
 ---
 
-Deployment shape (npm vs. Docker for this platform, #190/164-02), the
-secrets inventory (#191/164-03), the provenance check (#192/164-04), the
-exposure posture (#193/164-05), cost/routing impact against calling
+## 2. Deployment shape: npm vs. Docker for this platform
+
+### 2.1 Five install modes, three already out of scope
+
+The README documents five install modes: npm/`bunx` global install, Docker /
+Docker Compose, an Electron desktop app (`npm run electron:build`, "Native
+window + system tray — Windows / macOS / Linux"), a PWA ("Add to Home
+Screen" from a browser, "Fullscreen, offline, installable from browser"),
+and Termux on Android (`pkg install nodejs && npx -y omniroute`, "Runs on
+your phone, 24/7, no root")
+(<https://raw.githubusercontent.com/diegosouzapw/OmniRoute/main/README.md>).
+The last three each require a GUI, a browser session, or a phone, none of
+which this platform's one headless k3s node has (#164's own scoping already
+excludes them: "the Electron desktop app, PWA, and Termux modes target
+other kinds of machines"). Sections 2.2-2.5 below cover only the two
+self-hosted server modes: npm global install and Docker.
+
+### 2.2 npm global install: no container image, no daemonization story
+
+`npm install -g omniroute && omniroute` starts a foreground Node process; it
+produces no container image and ships no systemd unit, `pm2` config, or
+equivalent for keeping itself running unattended. Checked in
+`docs/guides/SETUP_GUIDE.md`
+(<https://raw.githubusercontent.com/diegosouzapw/OmniRoute/main/docs/guides/SETUP_GUIDE.md>):
+the only background-service instruction in the whole guide is `systemctl
+--user enable --now omniroute.service` for the Arch Linux AUR package
+specifically, not for the npm global install path, and this platform is not
+Arch (ADR-0013 provisions node1 by USB autoinstall, not a package manager
+this AUR unit would exist under). The guide's "Headless server
+(CI/automation)" section covers `omniroute setup --non-interactive`, i.e.
+unattended *configuration*, not unattended *supervision*: something else
+still has to keep the process alive and restart it.
+
+This platform has no answer for "something else" outside of Kubernetes
+itself: every existing workload here is a container running under k3s
+(ADR-0007), restarted by the kubelet, not by a hand-rolled systemd unit
+authored per workload. Fitting the npm path in would mean either writing a
+bespoke systemd unit on node1 (a supervision mechanism this repo doesn't use
+for any other workload, breaking the "every workload is a Kustomization"
+pattern) or wrapping the npm install in a custom Dockerfile of this repo's
+own authorship, at which point it's not really the npm mode being deployed
+in favour of the Docker one below, since OmniRoute already publishes one.
+
+### 2.3 Docker: the only shape that mechanically fits this platform
+
+Every existing workload here is declared as a plain-manifest `workloads/`
+Kustomization referencing a container image: Immich's
+`server-deployment.yaml`, `postgres-statefulset.yaml`, and
+`redis-statefulset.yaml` are the concrete precedent (`workloads/immich/`),
+and #160/#161/#162 (observability, backup, ingress) follow the same shape.
+Flux's `workloads` Kustomization has no `kustomization.yaml` of its own;
+kustomize-controller's directory walk picks up any subdirectory that
+supplies one, so a new `workloads/omniroute/` directory slots in with no
+edit to the parent tree (`workloads/immich/kustomization.yaml`'s own
+comment on this mechanism, citing #133).
+
+OmniRoute's Docker image is the only artefact of the project that plugs
+directly into that pattern: `diegosouzapw/omniroute:latest`, multi-platform
+manifest `linux/amd64` + `linux/arm64`, ~250MB
+(`docs/guides/DOCKER_GUIDE.md` "Image Tags" table,
+<https://raw.githubusercontent.com/diegosouzapw/OmniRoute/main/docs/guides/DOCKER_GUIDE.md>).
+`docker-compose.yml` itself is not something this repo runs as-is (this
+platform has no `docker compose` step anywhere, only k3s manifests), but its
+four profiles show which image target a hand-authored `Deployment` should
+point at:
+
+| Profile | Stage/image | When to use (project's own wording) |
+| --- | --- | --- |
+| `base` (default) | `runner-base` | "Headless server / minimal runtime, no provider CLIs bundled" |
+| `cli` | `runner-cli` | "Agentic workflows that call `omniroute providers/setup/doctor` and bundled CLIs (Codex, Claude Code, Droid, OpenClaw)" |
+| `host` | `omniroute-host` | Mounts host CLI binaries read-only, Linux-specific |
+| `cliproxyapi` | `cliproxyapi` sidecar | Upstream CLI proxying on port 8317 |
+
+(same source as above). `base`/`runner-base` is the fit: per #164's own
+scoping, this platform's only current or prospective consumers (Claude
+Code, potentially Hermes/OpenClaw) call OmniRoute over the network as an
+HTTP gateway, from the operator's own machine or another workload: nothing
+on this platform needs OmniRoute to run a coding-agent CLI *inside* its own
+container, which is what `cli`/`host`/`cliproxyapi` add. Translating that
+into a `Deployment` means pointing `image:` at
+`diegosouzapw/omniroute:latest` (or a pinned version tag, the `latest` vs.
+`3.8.0` choice is a #164-06/#164-07 concern, not this ticket's) built from
+or equivalent to the `runner-base` target, not `runner-cli`.
+
+### 2.4 What the Docker shape still requires this repo to author itself
+
+No Kubernetes manifest or Helm chart is published anywhere in the project:
+checked the full `docs/` directory listing on GitHub (24 entries under
+`docs/guides/`, none named for Kubernetes or Helm;
+<https://api.github.com/repos/diegosouzapw/OmniRoute/contents/docs/guides>)
+and `docs/guides/DOCKER_GUIDE.md`'s own "See Also" section, which links a
+`VM_DEPLOYMENT_GUIDE.md` and a `FLY_IO_DEPLOYMENT_GUIDE.md` under
+`docs/ops/` and nothing else. This is the same position Immich was in here
+(no Helm chart used; `workloads/immich/` is entirely hand-authored plain
+manifests), so it sets no new precedent, but it does mean a
+`workloads/omniroute/` Kustomization must be written from scratch, same
+scope of work as Immich's: `namespace.yaml`, a `Deployment` for the
+`base`-profile image, a `Service`, a `PersistentVolume`/`PersistentVolumeClaim`
+pair for `/app/data` (ADR-0014: static local PV, no CSI, matching
+`postgres-pv.yaml`/`postgres-pvc.yaml`), and, because Redis carries no
+profile gate and is "always defined" regardless of which Compose profile is
+chosen (`docs/guides/DOCKER_GUIDE.md` "Redis Sidecar" section, same source;
+corroborates section 1.4 above), a second `Deployment`/`StatefulSet` for
+`redis:7-alpine` with its own PV/PVC, the same shape as
+`redis-statefulset.yaml` already in `workloads/immich/`. None of this is
+OmniRoute-specific complexity; it's the standard translation this repo
+already performs for every containerized workload that ships no Kubernetes
+manifests of its own.
+
+### 2.5 Verdict
+
+Docker is the only deployment shape that fits this platform. npm global
+install has no container image and no daemonization mechanism this repo's
+supervision model (k3s/kubelet, ADR-0007) or provisioning (ADR-0013, not
+Arch) can hook into without inventing a one-off systemd unit that breaks
+the "every workload is a Kustomization" pattern; Docker's `runner-base`
+image drops straight into that pattern the same way Immich's images did.
+The image target is `diegosouzapw/omniroute:latest` (`base`/`runner-base`,
+not `cli`), plus a mandatory `redis:7-alpine` sidecar, as a hand-authored
+`workloads/omniroute/` Kustomization: no upstream Kubernetes manifest or
+Helm chart exists to shortcut that authoring.
+
+---
+
+The secrets inventory (#191/164-03), the provenance check (#192/164-04),
+the exposure posture (#193/164-05), cost/routing impact against calling
 Anthropic directly (#194/164-06), and the recommendation (#195/164-07) are
 follow-on tickets.
