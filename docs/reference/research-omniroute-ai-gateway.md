@@ -4,9 +4,9 @@
 **Status:** in progress. Covers #189 (164-01, resource footprint, section 1
 below), #190 (164-02, deployment shape, section 2 below), #191 (164-03,
 secrets inventory, section 3 below), #192 (164-04, provenance check, section
-4 below), and #193 (164-05, exposure posture, section 5 below). Cost/routing
-impact (#194, 164-06) and the recommendation (#195, 164-07) are follow-on
-tickets.
+4 below), #193 (164-05, exposure posture, section 5 below), and #194 (164-06,
+cost/routing impact, section 6 below). The recommendation (#195, 164-07) is
+a follow-on ticket.
 **Sources:** primary only, per this repo's `/research` convention: the
 project's own repository (`docker-compose.yml`, `Dockerfile`,
 `docs/reference/ENVIRONMENT.md`, `docs/reference/FREE_TIERS.md`,
@@ -29,8 +29,13 @@ Tailscale provisioning, and, for section 5's OAuth redirect-URI check,
 Google's own OAuth 2.0 documentation
 (<https://developers.google.com/identity/protocols/oauth2/web-server>) and
 Tailscale's own HTTPS documentation
-(<https://tailscale.com/kb/1153/enabling-https>). Every claim carries its
-URL inline. Figures pulled via API are timestamped to this check
+(<https://tailscale.com/kb/1153/enabling-https>), and, for section 6's
+cost/routing check, `docs/reference/FREE_TIERS.md`'s per-provider table and
+ToS-attention table, the repository's own top-level README banner (its
+provider/model count claim), and Anthropic's own Claude Code documentation
+on connecting to an LLM gateway
+(<https://code.claude.com/docs/en/llm-gateway-connect>). Every claim carries
+its URL inline. Figures pulled via API are timestamped to this check
 (2026-08-19); they move as the project grows.
 
 ---
@@ -740,8 +745,9 @@ Socket.dev episode is the one fact from this section worth carrying
 forward into #195's recommendation explicitly, since it is the closest
 thing to a real incident this project has had.
 
-The cost/routing impact against calling Anthropic directly (#194/164-06) and
-the recommendation (#195/164-07) are follow-on tickets.
+The cost/routing impact against calling Anthropic directly is covered in
+section 6 below (#194/164-06); the recommendation (#195/164-07) is a
+follow-on ticket.
 
 ---
 
@@ -950,3 +956,148 @@ port-forward` or this platform later stands up Tailscale MagicDNS/HTTPS
 (5.4, 5.5). None of this changes the exposure default itself; it is the
 concrete shape "private by default" takes once OmniRoute's own access
 model is read against the mechanism this repo actually has for it.
+
+---
+
+## 6. Cost/routing impact against Claude Code and Hermes/OpenClaw
+
+### 6.1 The "1200+ models, 340 providers" claim, and what it actually covers
+
+Story 5 asks whether the "1200+ models, 340 providers" headline improves on
+calling Anthropic directly for Claude Code, or whether the value is entirely
+in fronting Hermes/OpenClaw's provider costs. The headline figure is the
+repository's own top banner: "one endpoint, 340 providers (90+ free), 1200+
+models" (<https://github.com/diegosouzapw/OmniRoute>). That count is the
+full catalog OmniRoute can proxy to, most of it reachable only by supplying
+the operator's own paid API key for that specific provider, per section
+3.3's finding that most provider connections go through the Dashboard, not a
+free pool. The keyless portion is a much smaller, separately documented
+number: `docs/reference/FREE_TIERS.md`'s own TL;DR counts "290 AI providers"
+with "90+ free", aggregated into "43 provider pools / 516 models" for the
+actual free-tier grant already cited in section 3.1 (~1.53B tokens/month
+recurring)
+(<https://raw.githubusercontent.com/diegosouzapw/OmniRoute/main/docs/reference/FREE_TIERS.md>).
+The provider count itself has already drifted between the two documents
+(340 in the README banner, 290 in `FREE_TIERS.md`'s body text), the same
+kind of README-runs-ahead-of-the-rest-of-the-docs churn section 4.6 already
+found in the npm release cadence, not a contradiction worth resolving here.
+What matters for story 5 is smaller than either number: this deployment's
+own use case, per #164's scoping, is Claude Code and potentially
+Hermes/OpenClaw, none of which has a reason to buy access to 1200 paid
+models through a gateway instead of directly. If the free-tier-aggregation
+argument holds at all, it has to hold on the free 516-model slice, and
+section 6.2 checks whether Claude is in it.
+
+### 6.2 Anthropic and Claude are absent from OmniRoute's free-tier pool
+
+`FREE_TIERS.md`'s full free-tier table (43 pools) names no Anthropic or
+Claude entry anywhere: not in the TL;DR summary, not in the per-provider
+table, not in the ToS-attention table (checked in full, same source as 6.1).
+The one route to a genuine Claude response with no Anthropic API key is Kiro
+AI, already named in section 3.1 as one of the two keyless onboarding paths
+("free Claude, ~50 credits/month per account", README's Quick Start
+section). `FREE_TIERS.md`'s own per-provider row for Kiro gives the real
+figure for that path: "~25K" steady tokens/month, and its ToS-attention
+table flags Kiro at the document's strongest caution level, "avoid": the
+row states the Kiro FAQ "explicitly prohibits use with 'OpenClaw and similar
+tools that leverage third-party harnesses'", naming a self-hosted AI proxy
+like OmniRoute as exactly the kind of routing that clause forbids (same
+source). Two independent facts rule this path out for this deployment: 25K
+tokens/month is a fraction of what a single Claude Code turn consumes, let
+alone a working session, and OmniRoute's own documentation flags the exact
+use case this ticket is evaluating as a terms-of-service violation of the
+underlying free tier it would draw from. Every other route to a Claude
+response through OmniRoute goes through the Dashboard's Anthropic OAuth
+connection (3.4, "public client, no secret needed") or a supplied API key,
+both metered against the same Anthropic pricing an operator would pay
+calling Anthropic directly, not against any free pool gained by adding
+OmniRoute in front.
+
+### 6.3 What routing Claude Code through OmniRoute actually changes: the auth swap
+
+Claude Code's own documentation states the mechanism plainly: pointing
+Claude Code at any gateway via `ANTHROPIC_BASE_URL` makes it "authenticate
+to the gateway with a credential your organization issues instead of your
+personal claude.ai login" ("Connect Claude Code to an LLM gateway",
+<https://code.claude.com/docs/en/llm-gateway-connect>). That is the same
+mechanism OmniRoute's own docs describe for Claude Code: "Point your coding
+tool" at OmniRoute's local endpoint with an API key copied from its
+Dashboard (README, Quick Start, same source as 6.1). This is not an
+optimization sitting alongside Claude Code's normal login; it replaces it. A
+Claude Code session authenticates one of two ways: the personal claude.ai
+OAuth login tied to a Pro/Max subscription, billed as a flat monthly fee
+regardless of token volume, or a directly configured `ANTHROPIC_API_KEY`,
+metered per token at Anthropic's own published rates. Once
+`ANTHROPIC_BASE_URL` points at OmniRoute, the subscription OAuth login is
+not used at all; every request goes out under whatever credential
+OmniRoute's own Anthropic connection is metered against, which per 6.2 is
+either a supplied Anthropic API key (the same per-token rate as calling
+Anthropic directly, no savings) or the ToS-barred, five-figure-token Kiro
+trickle (not viable at any usage volume this repo's own agentic workload
+would produce).
+
+### 6.4 Does OmniRoute improve on calling Anthropic directly for Claude Code specifically?
+
+No, on either of the two ways this deployment's Claude Code usage could be
+billed today, a distinction this ticket did not need to resolve since
+neither branch changes the answer (this repo's own docs record no evidence
+either way; checked `CONTEXT.md` and `docs/reference/platform-state.md` in
+full, neither mentions Claude Code's billing arrangement):
+
+- If Claude Code here runs on the personal claude.ai subscription (the
+  common case for an individual Pro/Max user): routing through OmniRoute
+  cannot preserve that entitlement at all, per 6.3, since the subscription
+  login is bypassed the moment `ANTHROPIC_BASE_URL` is set. The only way to
+  keep talking to real Claude models through OmniRoute is metered API
+  billing, a materially worse cost position than a flat subscription fee for
+  anyone whose usage exceeds the metered-equivalent cost, which routine
+  coding-agent usage typically does.
+- If Claude Code here already runs on a metered `ANTHROPIC_API_KEY`:
+  OmniRoute changes nothing about the per-token cost, since Anthropic is not
+  in its free pool (6.2) and its Dashboard connection is billed at the same
+  Anthropic rates either way. The only thing added is a second component in
+  the request path holding or proxying the same credential, for the
+  resource-footprint (section 1), secrets-boundary (section 3), and
+  exposure-posture (section 5) costs this research doc already prices in,
+  in exchange for no routing or cost benefit on this specific traffic.
+
+The "1200+ models, 340 providers" claim does not change either branch:
+Claude Code's whole reason for existing is Claude-quality output on coding
+tasks, so a gateway's access to 1200 non-Claude models is not a substitute
+this deployment would use for Claude Code's own calls, only a number
+describing traffic this deployment has no plan to send.
+
+### 6.5 The value case is entirely in Hermes/OpenClaw, and #165 has not settled it
+
+#164's own Further Notes said this plainly before this ticket started: "if
+neither Hermes nor OpenClaw is adopted, Omniroute's only remaining consumer
+is Claude Code itself, which changes whether the gateway is worth its
+footprint at all." Section 6.4 above is the concrete answer to that question
+for the Claude Code half: no upside, only added footprint and secrets
+surface. Whatever value case OmniRoute has left rests entirely on Hermes
+and/or OpenClaw actually needing multi-provider free-tier aggregation,
+which depends on whether either tool's own model requirements tolerate the
+non-Claude models that make up nearly all of OmniRoute's free pool (6.2).
+#165 ("Investigate a personal AI assistant: Hermes vs OpenClaw") is still
+open with no research doc written (checked via `gh issue view 165`,
+2026-08-19), so this ticket cannot resolve that question, only state what it
+depends on: a "yes" for OmniRoute at all requires a "yes, and it doesn't
+need Claude-quality output" from #165 first.
+
+### 6.6 Verdict
+
+Against calling Anthropic directly for Claude Code specifically, OmniRoute
+has no cost or routing upside found anywhere in this check: Anthropic is
+absent from its free-tier pool, its one keyless route to a genuine Claude
+response (Kiro) is both too small to matter and explicitly barred by Kiro's
+own terms for this exact proxy use case, and pointing Claude Code at
+OmniRoute replaces the subscription login with metered billing rather than
+adding a cheaper path alongside it. The "1200+ models, 340 providers"
+headline describes a paid catalog this deployment has no reason to call
+through Claude Code, not a free-tier win. What remains of #164's original
+premise, aggregating free-tier quota across tools instead of paying per
+tool, applies only to whatever of Hermes/OpenClaw's own traffic can
+tolerate a non-Claude model, a question #165 has not yet answered. This is
+a concrete argument for closing this ticket "no" on Claude Code's own
+account alone, independent of #195's final recommendation, which per #164's
+own story 9 is an acceptable outcome for this whole investigation.
