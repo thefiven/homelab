@@ -1,12 +1,12 @@
 # OmniRoute AI gateway: resource footprint and whether it's worth running here
 
 **Date:** 2026-08-19
-**Status:** in progress. Covers #189 (164-01, resource footprint, section 1
+**Status:** complete. Covers #189 (164-01, resource footprint, section 1
 below), #190 (164-02, deployment shape, section 2 below), #191 (164-03,
 secrets inventory, section 3 below), #192 (164-04, provenance check, section
-4 below), #193 (164-05, exposure posture, section 5 below), and #194 (164-06,
-cost/routing impact, section 6 below). The recommendation (#195, 164-07) is
-a follow-on ticket.
+4 below), #193 (164-05, exposure posture, section 5 below), #194 (164-06,
+cost/routing impact, section 6 below), and #195 (164-07, recommendation,
+section 7 below).
 **Sources:** primary only, per this repo's `/research` convention: the
 project's own repository (`docker-compose.yml`, `Dockerfile`,
 `docs/reference/ENVIRONMENT.md`, `docs/reference/FREE_TIERS.md`,
@@ -1140,3 +1140,89 @@ tolerate a non-Claude model, a question #165 has not yet answered. This is
 a concrete argument for closing this ticket "no" on Claude Code's own
 account alone, independent of #195's final recommendation, which per #164's
 own story 9 is an acceptable outcome for this whole investigation.
+
+---
+
+## 7. Recommendation
+
+**No. Do not deploy OmniRoute now.** Revisit only if #165 concludes
+Hermes and/or OpenClaw need multi-provider free-tier aggregation and their
+own traffic tolerates non-Claude models.
+
+Section 6.6 already closes the strongest form of #164's own premise: against
+Claude Code specifically, OmniRoute has no cost or routing upside, and one
+concrete downside (routing through it drops the flat-fee subscription login
+in favour of metered billing, 6.3-6.4). That alone would satisfy #164's
+story 9 ("a clear no is an acceptable outcome"), but it is not the only
+finding pointing the same way; every other axis this investigation measured
+adds cost without adding value for this deployment's actual, current use
+case:
+
+- **Footprint (§1) is a real risk, not an unknown.** No published figure
+  exists, but two independent, closed issues measured 3.7-8 GB RSS under
+  concurrent-agent load, the traffic shape this platform would generate
+  (§1.3) — several times over ADR-0002's entire 2 GiB standard slot, before
+  Redis (mandatory, not optional despite the README's "one-click" framing,
+  §1.4) or the unbounded SQLite audit log (§1.4) are counted at all. Three
+  issues on the same concurrency/memory boundary were still open as of this
+  check (§1.3): this is not a solved problem upstream.
+- **Deployment (§2) is buildable but adds real authoring weight.** Docker is
+  the only shape that fits this platform's k3s/Kustomization pattern (§2.5),
+  but nothing upstream ships a Kubernetes manifest: a `workloads/omniroute/`
+  Kustomization has to be hand-authored from scratch, plus a second
+  Deployment/StatefulSet for the mandatory Redis sidecar (§2.4) — the same
+  order of work as Immich, for a workload with no committed second consumer
+  yet (§6.5).
+- **Secrets (§3) leave one gap this repo's own SOPS+age boundary doesn't
+  close.** The required-secrets inventory maps cleanly onto one SOPS file
+  (§3.6), but any provider credential added later through the Dashboard UI
+  — the documented "preferred setup" — lands in OmniRoute's own SQLite or
+  `data/provider-credentials.json` on the workload's data volume, outside
+  this repo's Git history or SOPS tooling entirely (§3.3, §3.6). Setting
+  `STORAGE_ENCRYPTION_KEY` (recommended upstream, not required) closes the
+  DB half of that gap; nothing found closes the flat-file half.
+- **Exposure (§5) is answerable, at the cost of one more explicit
+  action.** Private, Tailscale-only, matching ADR-0011's default, is a
+  correct fit (§5.6) — but this repo's NodePort mechanism is not itself an
+  auth boundary (§5.2), so `REQUIRE_API_KEY=true` has to be set by hand
+  against a shipped default of `false` (§5.3), one more operator action a
+  direct-to-Anthropic setup never needs.
+- **Provenance (§4) is the one axis that clears cleanly.** The maintainer
+  identity is real and long-established, commit/contributor history is
+  consistent with genuine outside activity, and the one substantive
+  incident found (the Socket.dev supply-chain flag) produced a same-day,
+  per-finding technical response and a merged fix with lasting
+  documentation (§4.8). Provenance alone is not disqualifying — but it was
+  never the deciding factor either way; #164's story 9 named it as one
+  route to "no," and this ticket instead reaches "no" on resource and cost
+  grounds with provenance clear.
+- **Chokepoint cost (story 8).** Beyond the measured costs above, adopting
+  OmniRoute means every coding-agent and assistant tool's traffic now
+  routes through one additional self-hosted component holding or proxying
+  every provider credential in use, in exchange for zero routing or cost
+  benefit on the one consumer (Claude Code) actually committed today.
+  That trade only starts to make sense once a second consumer exists that
+  actually needs the aggregation.
+
+**What "no, for now" gives up:** if #165 later adopts Hermes or OpenClaw and
+either needs models beyond what a single provider's own key or subscription
+covers, OmniRoute (or a similar gateway) would have to be re-evaluated from
+scratch rather than already sitting in place. Section 6.5 names one path
+worth re-opening at that point rather than re-deriving: OmniRoute's
+"Tier 1 Subscription" / "Quota-Share routing" mechanism, which reads as
+driving an already-authenticated Claude Code (or Codex/Copilot) subscription
+session as a backend for other callers at flat-fee cost rather than metered
+— a materially different case from the "OmniRoute as Claude Code's own
+gateway" question this ticket answers "no" to. That mechanism was flagged,
+not verified: no ToS caveat against it was found (unlike Kiro's explicit
+prohibition, §6.2), which is an absence, not a clearance, and Anthropic's
+own consumer-subscription terms were not checked against this specific reuse
+(§6.5). Whoever revisits this ticket should settle that ToS question before
+relying on the mechanism, not assume it from this doc's silence.
+
+**Revisit if:** #165 reaches a "yes" for Hermes and/or OpenClaw, and either
+tool's own model requirements tolerate non-Claude output for at least the
+share of traffic that would otherwise need per-tool paid API keys. Absent
+that, this ticket's own findings (§1, §2, §3, §5) stay valid as the shape a
+future deployment would take; nothing here needs re-research, only a
+re-weighing once a second consumer is real rather than hypothetical.
