@@ -2,11 +2,11 @@
 
 **Date:** 2026-08-19
 **Status:** in progress. Covers #196 (165-01, Hermes footprint/storage/provenance,
-section 1 below) only. OpenClaw's equivalent check (#197/165-02),
-provider/secrets inventory (#198/165-03), use-case analysis (#199/165-04), a
-local-inference/VRAM check (#200/165-05), exposure posture (#201/165-06), and
-the final comparison and recommendation (#202/165-07) are follow-on tickets
-against this same file.
+section 1 below) and #197 (165-02, OpenClaw's equivalent check, section 2
+below). The provider/secrets inventory (#198/165-03), use-case analysis
+(#199/165-04), a local-inference/VRAM check (#200/165-05), exposure posture
+(#201/165-06), and the final comparison and recommendation (#202/165-07) are
+follow-on tickets against this same file.
 **Sources:** primary only, per this repo's `/research` convention: the
 project's own repository (`README.md`, `Dockerfile`, `docker-compose.yml`,
 `.env.example`, `hermes_state_search.py`, and the documentation site's source
@@ -517,11 +517,532 @@ pattern is different enough from Omniroute's that it should carry forward
 as its own line into whichever ticket writes the final recommendation,
 not be treated as an equivalent "provenance clear" verdict.
 
+## 2. OpenClaw: footprint, storage, provenance
+
+The candidate named by #165 is `openclaw/openclaw`. That path is confirmed
+live and current: the repository exists, is maintained by the `openclaw`
+GitHub organization, was created 2025-11-24, and was last pushed to
+2026-08-19T21:08Z, within the hour of this check
+(`GET /repos/openclaw/openclaw`,
+<https://api.github.com/repos/openclaw/openclaw>). No identity correction is
+needed; the name and path match exactly. One background fact worth stating up
+front because it shapes several findings below: OpenClaw was launched under
+the name Clawdbot, briefly renamed Moltbot, then settled on OpenClaw
+(`docs.openclaw.ai/gateway/security`,
+<https://docs.openclaw.ai/gateway/security>, and corroborated independently
+by Northeastern University's own coverage, cited in section 2.3). That
+rename history is also why the `openclaw` GitHub organization account itself
+was created 2026-01-04
+(`GET /users/openclaw`, <https://api.github.com/users/openclaw>), six weeks
+*after* this specific repository, rather than the repository being younger
+than the org, the shape section 1 found for Hermes/`NousResearch`.
+
+### 2.1 Resource footprint
+
+#### No single documented Docker minimum exists
+
+Unlike Hermes's `user-guide/docker.md`, OpenClaw's own `docs/install/docker.md`
+does not carry a resource-limits table for the running container at all: its
+only RAM figure is a build-time warning, "Minimum: 2 GB for image build
+operations... `pnpm install` may be terminated with exit code 137 (out-of-memory)
+on hosts with only 1 GB"
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/docs/install/docker.md>).
+`docs/install/hetzner.md` repeats the identical framing, "at least 2 GB RAM
+for a source image build"
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/docs/install/hetzner.md>).
+Both are about compiling the image, not running it; neither is a runtime
+minimum. `docs/install/index.md` and `docs/vps.md`, the two pages that would
+be the natural home for a whole-application requirement, state none
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/docs/install/index.md>,
+<https://raw.githubusercontent.com/openclaw/openclaw/main/docs/vps.md>).
+
+#### What is documented, scattered across device-specific guides
+
+The one page carrying an explicit runtime table is written for a specific
+device, not the Docker deployment: `docs/install/raspberry-pi.md`.
+
+| Source | RAM | CPU | Disk |
+| --- | --- | --- | --- |
+| Raspberry Pi guide, minimum | 1 GB | 1 core | 500 MB free |
+| Raspberry Pi guide, recommended | 2 GB (4 GB preferred) | Pi 4/5 | 16 GB+ microSD/SSD |
+| Docker/Hetzner guides, build only | 2 GB | not specified | not specified |
+| `fly.toml`, production deploy | 2,048 MB | `shared-cpu-2x` | not stated |
+
+"Pi 4 with 4 GB" is rated "Good," "Pi 4 with 2 GB" is "OK" and needs swap,
+"Pi 4 with 1 GB" is "Tight, possible only with swap," and the Pi Zero 2 W's
+512 MB is "not recommended"
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/docs/install/raspberry-pi.md>).
+That 1 GB minimum / 2-4 GB recommended shape is coincidentally close to
+Hermes's own Docker-guide numbers (section 1.1), but it is sourced from a
+device-sizing page, not a container resource-limits table; OpenClaw ships no
+direct equivalent of Hermes's `docker.md` "Resource limits" section. The
+project's own `fly.toml`, its actual production deployment manifest, commits
+to a concrete number rather than a range: `2048mb` memory on a
+`shared-cpu-2x` machine, with the Node.js heap explicitly capped below that
+at 1,536 MB
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/fly.toml>). That
+figure is a real operational choice, closer to Hermes's "recommended" band
+than to either project's documented floor.
+
+Nothing enforces any of these figures by default in the shipped Docker
+artifacts: the repository's own `docker-compose.yml` sets no
+`deploy.resources` block on either the `openclaw-gateway` or `openclaw-cli`
+service, checked in full
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/docker-compose.yml>).
+The same absence as Hermes's and Omniroute's own compose files.
+
+#### What was actually measured: an active, currently-open leak cluster
+
+A search of the issue tracker for `RSS` or `OOM` returns 2,332 matching
+issues in total, 159 of them currently open
+(`search/issues?q=repo:openclaw/openclaw+(RSS+OR+OOM)`,
+`+is:open`). A narrower search for the literal phrase "memory leak" returns
+888 issues: 30 open, 858 closed; of the closed ones, 743 carry
+`state_reason: completed` and 112 carry `state_reason: not_planned`, a gap
+of 3 against the 858 closed total that the search API's own `reason:` filter
+does not explain (some closed issues may carry no `state_reason` at all)
+(`search/issues?q=repo:openclaw/openclaw+"memory+leak"`, `+is:open`,
+`+is:closed`, `+is:closed+reason:not_planned`,
+`+is:closed+reason:completed`). The concrete reports below are
+representative, not exhaustive:
+
+- **#91588** (opened 2026-06-09, still open): "Critical: Gateway Memory Leak
+  — RSS grows from 350MB to 15.5GB over days, causing repeated OOM crashes."
+  Measured directly: gateway RSS at 15,513 MB before an OOM-triggered
+  `launchd` restart, dropping to 350 MB immediately after, on an 8 GB Mac;
+  "no heap limit configured... on an 8 GB machine, this means it can consume
+  all available RAM before being killed"
+  (<https://github.com/openclaw/openclaw/issues/91588>).
+- **#103788** (opened 2026-07-10, still open): under memory pressure at
+  "RSS ~1.8 GiB, 118-120% of 1.5 GiB threshold," the gateway does not crash
+  but silently returns empty responses from every tool call (exec,
+  session_status, cron, web_search, Read) while continuing to accept
+  messages, a degraded-but-alive failure mode distinct from the crash #91588
+  documents (<https://github.com/openclaw/openclaw/issues/103788>).
+- **#121202/#121203/#121214** (three near-duplicate reports, opened and
+  closed the same day, 2026-08-09, all closed `not_planned`): "Gateway
+  memory leak on 2026.7.1-2: deferred session suspensions never released
+  (~3 MB/session), OOM every 2-3 hours." Heap-snapshot analysis (memlab plus
+  custom retainer tracing) traced it to `onDeferredSessionSuspension`
+  closures never released from `sessionStore`; measured RSS growth of
+  "~6-7 MB/min," hitting a systemd `MemoryHigh=1.2G` limit in 2-3 hours; the
+  report itself notes "this looks like the same class as #120394," naming a
+  fourth, separately-tracked report of the same failure family
+  (<https://github.com/openclaw/openclaw/issues/121202>). The `not_planned`
+  closure on all three, the same weaker signal Hermes's own #48287 showed
+  (section 1.1), means this specific report was not carried to a fix under
+  that number, though the linked #120394 remains open.
+
+A further set of open reports names the same failure family without being
+cited individually in depth here: #120394 (event-loop saturation and
+subagent orphaning tied to the same leak class), #115424 (V8 heap OOM during
+a main-session turn), #99659 (OOM after a companion app connected), #119565
+(concurrent MCP calls causing "excessive memory amplification"), #86119
+(orphaned worker processes accumulating after subagent/cron runs). As with
+Hermes, the pattern that matters is that a real cluster of reports is
+currently **open**, not a closed-then-quiet history.
+
+#### Verdict for this axis
+
+OpenClaw publishes no single Docker-specific resource-limits table the way
+Hermes does; the closest documented figures are a device-sizing page's 1 GB
+minimum / 2-4 GB recommended range (Raspberry Pi) and the project's own
+production `fly.toml` commitment of 2,048 MB. Read against ADR-0002's
+standard slot (Application capped at 1 GiB, no separate Database line
+needed here since all persistence is SQLite embedded in the same process,
+section 2.2), that 1 GB floor again matches the Application line exactly;
+the fly.toml figure (2,048 MB, effectively 2 GiB) lands right at the slot's
+entire budget rather than under it, and the Raspberry Pi guide's 4 GB upper
+bound clears it outright, before any real-world measurement is counted.
+What was actually measured
+goes further in the same direction as Hermes's own finding: an open,
+15.5 GB RSS crash report, an open degraded-state report at 1.8 GiB, and a
+closed-`not_planned`, still-unresolved-elsewhere 2-3-hour-to-OOM leak class,
+against a documented default of *no* Node.js heap limit at all in at least
+one of those reports. Any deployment sizing decision for this platform would
+need the same treatment section 1.1 gave Hermes: budget well above the
+documented range and plan for multi-hour memory growth as the norm, a
+question for whichever ticket eventually sizes an actual deployment.
+
+### 2.2 Storage model: two-tier SQLite, FTS5 plus optional vector search
+
+#### What it persists
+
+OpenClaw's own architecture documentation describes a two-tier SQLite
+design, current as of this check: a **global database**
+(`~/.openclaw/state/openclaw.sqlite`, schema version 7) holding
+control-plane state (agent discovery, gateway coordination, task/flow
+ledgers, plugin state, scheduler runtime, backup metadata, migration
+records), and a **per-agent database**
+(`~/.openclaw/agents/<agentId>/agent/openclaw-agent.sqlite`, schema version
+17) holding data-plane state owned by each agent: session metadata,
+transcript event streams, workspace/cache data, and memory indexes
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/docs/refactor/database-first.md>).
+Both run SQLite in WAL mode, using `node:sqlite` directly rather than a
+wrapper, and the project states this split exists to give "one durable
+global view without forcing large agent workspaces, transcripts, and binary
+scratch data into the shared gateway write lane," isolating per-agent
+growth from control-plane queries, the opposite structural choice from
+Hermes's single `state.db` file (section 1.2). Session rows themselves carry
+`sessionStartedAt`, `lastInteractionAt`, and `updatedAt` lifecycle timestamps,
+with full conversation history archived as JSONL transcript files alongside
+the SQLite session rows
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/docs/concepts/session.md>).
+Configuration remains file-backed in `openclaw.json`; only "runtime auth
+profiles move to SQLite," external provider or CLI credential files stay
+owner-managed outside the database (`database-first.md`, same source).
+
+#### Location: one state directory, no external database service
+
+Default path: `~/.openclaw`, overridable via `OPENCLAW_STATE_DIR`
+(`.env.example`,
+<https://raw.githubusercontent.com/openclaw/openclaw/main/.env.example>).
+Inside the official Docker image this resolves to three bind-mounted
+directories under `/home/node`: `OPENCLAW_CONFIG_DIR` →
+`/home/node/.openclaw` (holds `openclaw.json`, agent auth profiles, `.env`),
+`OPENCLAW_WORKSPACE_DIR` → `/home/node/.openclaw/workspace`, and
+`OPENCLAW_AUTH_PROFILE_SECRET_DIR` → `/home/node/.config/openclaw`
+(encryption key material), matching the shipped `docker-compose.yml`'s
+volume mounts
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/docs/install/docker.md>).
+No external database service is required to run OpenClaw: both SQLite tiers
+are embedded files under that same tree, the same `DATA_DIR`-shaped single
+mount point the ticket asked to confirm.
+
+#### Vector/embedding store: embedded by default, an external-file plugin optional
+
+This is the one axis where OpenClaw's answer differs materially from
+Hermes's. The builtin memory backend is a **hybrid retrieval engine**: FTS5
+full-text search with BM25 scoring, plus vector search over embeddings from
+a configurable provider (OpenAI by default if credentials are present,
+Ollama, Bedrock, and others), merged into one "deterministic ranking by
+relevance, recency, and write-time importance"
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/docs/concepts/memory-builtin.md>).
+Both the FTS5 index and the vector embeddings for this default path live
+inside the same per-agent `openclaw-agent.sqlite` file, no separate service,
+no separate file. Indexed content is `MEMORY.md`, `USER.md`, and files under
+`memory/*.md`, chunked at 400 tokens with 80-token overlap (same source). A
+second, genuinely separate vector store exists as an **opt-in plugin, not a
+default**: `@openclaw/memory-lancedb` runs LanceDB as "an embedded local
+file store rather than an external service," installed explicitly and
+writing to `~/.openclaw/memory/lancedb` by default (configurable, with an
+optional S3-compatible backend)
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/docs/plugins/memory-lancedb.md>).
+Neither path is an external database service; the plugin path is simply a
+second local file store rather than a table inside the shared SQLite file.
+
+#### Retention: auto-prune on by default, and two open unbounded-growth bugs
+
+Unlike Hermes, whose `auto_prune` ships `false`, OpenClaw's session
+maintenance defaults to active enforcement:
+
+```json5
+session: {
+  maintenance: {
+    mode: "enforce",           // "warn" only reports, does not prune
+    pruneAfter: "30d",
+    archiveDashboardAfter: "7d",
+    maxEntries: 500,
+    preserveRecent: "7d",
+  },
+}
+```
+
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/docs/concepts/session.md>,
+source of the schema default confirmed against
+`src/config/sessions/store-maintenance.ts`). No equivalent to Hermes's own
+"10-15 MB for hundreds of sessions" growth-rate claim was found in the pages
+searched; this check records that absence rather than a number.
+
+Two open bugs undercut that "enforce means bounded" story, on two different
+tables:
+
+- **#112638** (opened 2026-07-22, open): in `enforce` mode,
+  `session.maintenance.maxEntries`/`maxDiskBytes` are "silently exceeded
+  because thread/channel/topic session entries are treated as protected and
+  skipped by all three reclaim paths." Reproduced directly: "Observed: 562
+  entries and ~420MB with `maxEntries` effectively [unbounded]" against a
+  configured 500-entry / 400 MB ceiling
+  (<https://github.com/openclaw/openclaw/issues/112638>). This is the
+  `enforce`-mode default failing on exactly the busy Slack/Telegram
+  deployment shape the config is meant to bound.
+- **#114612** (opened 2026-07-27, open): "SQLite unbounded growth:
+  `memory_index_chunks` + `memory_embedding_cache` tables have no retention
+  policy, will fill disk over time." Field evidence from a production
+  instance: `memory_index_chunks` at 38,985 rows / 3.3 GB and growing, versus
+  session tables held steady at ~200 MB by the same `session.maintenance`
+  mechanism above; root cause traced to
+  `measureSessionPhysicalDiskUsage` (`src/config/sessions/disk-budget.ts`)
+  scanning only session/transcript tables, not the plugin-owned memory
+  tables covered in the previous subsection
+  (<https://github.com/openclaw/openclaw/issues/114612>). This is a direct,
+  currently-open unbounded-growth bug against the vector/embedding path this
+  section was asked to check specifically.
+
+A separate cluster of open storage-*integrity* (not growth) bugs also exists
+against the state database itself: **#125744** (opened 2026-08-18, open),
+b-tree pointer-map corruption recurring twice in three days on
+`state/openclaw.sqlite`, with the gateway holding a deleted `-shm` file
+descriptor, a "WAL split-brain signature," and the project's own in-place
+recovery mechanism (from a prior fix, #114278) failing to fire
+(<https://github.com/openclaw/openclaw/issues/125744>); **#123327** and
+**#120549**, both open, tracking WAL-mode SQLite corruption on non-local
+filesystems (virtiofs, 9p, Docker Desktop/OrbStack bind mounts); and
+**#94229**, open, a `plugin_state_entries` corruption report. None of these
+are cited in further depth here beyond naming them; the pattern is that
+storage-integrity risk against the same file family this section is about
+is a currently-open, not historical, concern.
+
+#### Whether this fits ADR-0014, or reopens it
+
+It fits without reopening it, on the same reasoning section 1.2 used for
+Hermes. ADR-0014's decision is "plain `local` PersistentVolumes, one static,
+GitOps-committed manifest per workload or standard slot"
+(`docs/adr/0014-hostpath-local-pv-no-csi.md`, "Decision"). A single
+`~/.openclaw` mount holding two SQLite database files (global and per-agent),
+JSONL transcript archives, and an optional LanceDB directory is
+architecturally the same shape as Hermes's single `/opt/data` mount and
+Immich's Postgres data directory, already served by a static `local` PV/PVC
+pair. Nothing found in section 2.1 or 2.2 asks for dynamic provisioning,
+`kubectl`-native resize, or `kubectl`-native snapshot, the three
+capabilities ADR-0014 declined to pay RAM for; `zfs snapshot` applies here
+exactly as it does to every other static-PV workload on this platform.
+
+RWX is not needed either: nothing in the documentation describes multiple
+containers writing to the same state directory concurrently, and the WAL
+corruption reports above (#123327, #120549) are explicitly caused by running
+a *single* SQLite writer over a *non-local* filesystem (network/virtualized
+mounts), not by a legitimate multi-writer use case; if anything, those
+reports argue for keeping this workload on a genuinely local `hostPath`-backed
+volume rather than for RWX, reinforcing ADR-0014's own local-disk assumption
+rather than testing it. The two-tier database split (global vs. per-agent)
+is itself an application-level concurrency answer, not a storage-layer one,
+consistent with ADR-0014's finding that this class of workload's contention
+handling belongs inside the application, not the PV.
+
+**Verdict: fits ADR-0014 as-is.** A `workloads/openclaw/` Kustomization would
+need one static PV/PVC pair for `~/.openclaw`, sized above whatever the
+memory-index growth shown in #114612 implies for a given deployment rather
+than the small steady-state session-table figure alone, and the two open
+storage-integrity bugs (#125744 and the filesystem-locality cluster) are
+facts a future deployment ticket should carry forward, including the direct
+warning inside those reports themselves that WAL-mode SQLite over a
+non-local filesystem is the trigger, which is itself an argument for
+exactly the local, non-networked `hostPath` model ADR-0014 already chose,
+not against it.
+
+### 2.3 Provenance check
+
+#### Maintainer identity: a project mid-rebrand, not a name borrowed for this product
+
+The `openclaw` GitHub organization was created 2026-01-04, with 23,263
+followers, its own listed domain (`openclaw.ai`) as its blog, and a public
+contact address (`peter@openclaw.ai`) (`GET /users/openclaw`,
+<https://api.github.com/users/openclaw>). Read together with the rename
+history noted in this section's opening (Clawdbot → Moltbot → OpenClaw), the
+org account being younger than the repository is explained by the rebrand,
+not by the org being freshly stood up around a single announcement: the
+underlying project, under its earlier names, is older than either the org
+account or this specific repository path. The email domain (`openclaw.ai`)
+matches the org's own listed homepage exactly, and the individual behind it
+identifiable from the commit history below (`steipete`) is independently
+named as "OpenClaw developer Peter Steinberger" in Northeastern University's
+own coverage ("Independent coverage," below), the same person, not a
+pseudonymous or unverifiable maintainer.
+
+#### Commit and contributor authorship: one very dominant author, real but thinner breadth beneath
+
+`GET /repos/openclaw/openclaw/contributors` lists **372** distinct
+contributor logins across the full paginated result (three full pages of
+100 plus a 72-row final page)
+(<https://api.github.com/repos/openclaw/openclaw/contributors>).
+Concentration at the top is sharper than either Hermes or Omniroute showed:
+`steipete` (Peter Steinberger) shows 41,561 contributions, more than three
+times Hermes's top contributor's count against a comparable-sized
+contributor list; `vincentkoc` 12,621, `shakkernerd` 4,176, `obviyus` 1,960,
+and `github-actions[bot]` 1,051.
+
+The 30 most recent commits as of this check span roughly three hours
+(2026-08-19T18:05Z to 21:13Z) and name seven distinct logins: `steipete`
+(the large majority of the 30), `clawsweeper` (twice), `vincentkoc` (twice),
+`joshavant`, `shakkernerd`, `sjudson`, and `bdjben`
+(<https://api.github.com/repos/openclaw/openclaw/commits>). All 30 carry a
+GitHub-verified signature. `clawsweeper` is a registered `User` account, not
+a GitHub App bot, per its own account record
+(`GET /users/clawsweeper`, <https://api.github.com/users/clawsweeper>); this
+check did not attempt to determine whether it is operated by a person or by
+automation running under a personal token, and states only what the account
+type field itself reports. Set against Hermes's 30-commit window (roughly 24
+hours, at least eight distinct human authors interleaved plus one verified
+bot), OpenClaw's most-recent-commits window is both shorter in wall-clock
+time and more concentrated in a single author, even though its total
+contributor list (372) is comparable in scale to Hermes's (396).
+
+Release cadence is markedly faster than Hermes's: **234** GitHub releases
+from `v0.1.1` (2025-11-25) to `v2026.8.1-beta.2` (2026-08-15)
+(<https://api.github.com/repos/openclaw/openclaw/releases>), roughly 264
+days apart, averaging close to one release per day rather than Hermes's
+near-weekly cadence.
+
+#### Scale, re-measured: #165's cited figures against this check's numbers
+
+#165 cited "386.5k stars / 81.2k forks / 5,621 open issues." Re-measured
+today: **386,803 stargazers, 81,264 forks, 5,804 open issues**, 1,757
+subscribers (<https://api.github.com/repos/openclaw/openclaw>). All three
+moved modestly upward since #165 was framed, the same direction Hermes's own
+re-measurement showed (section 1.3). As with Hermes and Omniroute's own
+re-measurements, whether this growth curve is itself a plausible rate is a
+base-rate question this check does not re-argue, per this repository's own
+prior finding that the operator has independently verified Hermes, OpenClaw,
+and Omniroute through channels of their own before #163-165 were opened.
+
+#### Independent coverage: extensive, and largely about security posture
+
+Unlike Hermes, where this check found no dedicated third-party coverage,
+OpenClaw has been covered directly and repeatedly by name, almost entirely
+on its security posture. Two sources were read in full for this check:
+
+- **Bitsight** (João Cruz, Principal Security Research Scientist),
+  published 2026-02-09: Bitsight's own internet-wide scan "discovered over
+  30,000 distinct OpenClaw instances online between January 27 and February
+  8, 2026," spanning technology, healthcare, finance, government, and
+  insurance sectors, and observed attackers attempting "authentication
+  bypasses, protocol downgrades" against exposed instances, including
+  evidence some "had read the source" code. The article quotes the
+  project's own creator: "Most non-techies should not install this"
+  (<https://www.bitsight.com/blog/openclaw-ai-security-risks-exposed-instances>).
+- **Northeastern University** (Cesareo Contreras), published 2026-02-10:
+  quotes cybersecurity researcher Aanjhan Ranganathan calling OpenClaw "a
+  privacy nightmare" over the scope of data access it requests and limited
+  visibility into where that data goes once granted, and separately
+  confirms "OpenClaw developer Peter Steinberger announced security
+  improvements, including requiring GitHub accounts (one week old minimum)
+  for skill uploads to ClawHub"
+  (<https://news.northeastern.edu/2026/02/10/open-claw-ai-assistant/>).
+
+A further set of security-vendor and press pieces on the same topic was
+located but not read in full for this check, recorded here as evidence of
+coverage volume rather than as sourced claims: Sangfor, Atomicmail, Reco.ai,
+Trend Micro, Cisco Blogs, and McAfee all published pieces specifically about
+OpenClaw's security exposure during the same period (search results for
+"OpenClaw AI assistant openclaw.ai review security", 2026-08-19). This is
+the opposite finding from Hermes's "absence, not a clearance" verdict:
+OpenClaw's coverage is real, substantial, and consistently about the same
+theme, default-exposed instances and broad tool/data access under a
+single-operator trust model the project's own security documentation
+confirms by design (`docs.openclaw.ai/gateway/security`,
+<https://docs.openclaw.ai/gateway/security>: "OpenClaw is not a hostile
+multi-tenant security boundary for multiple adversarial users").
+
+#### Package registries: a matching npm publisher, and an unrelated PyPI namesake
+
+An `openclaw` package exists on the npm registry, maintained by `steipete`
+(`steipete@gmail.com`) and `vincentkoc` (`vincentkoc@ieee.org`), the top two
+contributors by commit count found above, pointing at
+`git+https://github.com/openclaw/openclaw.git`
+(<https://registry.npmjs.org/openclaw>). Publisher identity matches the
+GitHub organization and its own top contributors directly, a cleaner match
+than either Hermes's or Omniroute's own npm findings.
+
+PyPI is a different picture, and a sharper one than Hermes's "unofficial
+wrapper" finding. An `openclaw` package does exist on PyPI, but it is **not
+related to this project at all**: its own description reads "Installer for
+the cmdop CLI — one binary that runs an AI agent on your machine," with
+project URLs pointing to `cmdop.com` and `github.com/commandoperator`, no
+reference anywhere to `openclaw/openclaw` or `openclaw.ai`
+(<https://pypi.org/pypi/openclaw/json>). It carries exactly two published
+versions (2.0.1, 2.0.2), both uploaded on the same day, 2026-08-13, six days
+before this check. This is a bare namespace collision, not a mislabeled
+unofficial build: an operator or automation that resolved "openclaw" against
+PyPI rather than npm or the project's own installer script would land on an
+entirely unrelated product.
+
+#### Security advisories: a large, actively-published record, fixed before disclosure
+
+The repository's own Security Advisories endpoint is not empty, the
+opposite finding from both Hermes and Omniroute: it lists **647** published
+advisories as of this check, paginated in full
+(`GET /repos/openclaw/openclaw/security-advisories`). Severity breakdown:
+**14 critical, 219 high, 350 medium, 64 low**. Every one of the 647 carries
+a `patched_versions` entry already set at publish time; none were found
+unpublished-without-a-fix in this scoped set, the opposite pattern from
+Hermes's one still-open advisory (section 1.3). Only 39 of the 647 carry an
+assigned CVE identifier; the remainder are GHSA-only.
+
+Publication is heavily bursty rather than steadily trickling: single-day
+spikes of 67 advisories (2026-05-28), 59 (2026-03-31), 45 (2026-06-30), and
+40 (2026-02-21 and again 2026-04-16) account for a large share of the total,
+consistent with batches of findings from a security-review engagement being
+published together rather than disclosed one at a time as found.
+
+All 14 critical-severity advisories carry an external reporter credit, not
+an internal one:
+
+| GHSA | Summary | Fixed in | Credited reporter |
+| --- | --- | --- | --- |
+| GHSA-gv46-4xfq-jv58 | RCE via Node Invoke Approval Bypass in Gateway | `>= 2026.2.14` | `222n5` |
+| GHSA-4rj2-gpmh-qq5x | Inbound allowlist bypass, voice-call extension | `>= 2026.2.2` | `simecek`, `stanislavfortaisle`, `MegaManSec` |
+| GHSA-qrq5-wjgg-rvqw | Path traversal in plugin installation | `>= 2026.2.1` | `logicx24` |
+| GHSA-4jpw-hj22-2xmc | Pairing-scoped device tokens could mint `operator.admin`, reach node RCE | `2026.3.11` | `tdjackey` |
+| GHSA-rqpp-rjj8-7wv8 | WebSocket shared-auth connections could self-declare elevated scopes | `2026.3.12` | `LUOYEcode` |
+| GHSA-hf68-49fm-59cq | `device.pair.approve` escalates `operator.pairing` to `operator.admin`, reaches node RCE | `>= 2026.3.22` | `zpbrent` |
+| GHSA-fqw4-mph7-2vr8 | Gateway shared-auth reconnect widens scope to `operator.admin`, node RCE | `2026.3.25` | `zpbrent` |
+| GHSA-hc5h-pmr3-3497 | `/pair approve` path omitted caller scope subsetting | `>= 2026.3.28` | `AntAISecurityLab` |
+| GHSA-9hjh-fr4f-gxc4 | Backend reconnect lets non-admin scopes self-claim `operator.admin` | `2026.3.25` | `zpbrent` |
+| GHSA-8rh7-6779-cjqq / GHSA-j7p2-qcwm-94v4 | CWD `.env` injection bypasses host-env policy / config takeover | `>= 2026.3.28` / `>= 2026.3.22` | `tdjackey` |
+| GHSA-g5cg-8x5w-7jpm / GHSA-9p3r-hh9g-5cmg | Sandbox escape, heartbeat context inheritance / TOCTOU race | `>= 2026.3.31` (both) | `AntAISecurityLab` |
+| GHSA-xh72-v6v9-mwhc | Feishu webhook/card-action validation now fails closed | `2026.4.15` | `dhyabi2` |
+
+One advisory outside that top-14 list is worth naming directly because it is
+the one independently cross-referenced against an NVD CVE and outside
+coverage: **GHSA-g8p2-7wf7-98mq / CVE-2026-25253**, "OpenClaw/Clawdbot has
+1-Click RCE via Authentication Token Exfiltration From `gatewayUrl`," high
+severity, published 2026-02-02, filed against the `clawdbot` npm package
+name (the project's pre-rename identity), fixed the same day, and credited
+externally on both GitHub and a third-party write-up
+(`depthfirst.com/post/1-click-rce-to-steal-your-moltbot-data-and-keys`)
+(<https://api.github.com/advisories/GHSA-g8p2-7wf7-98mq>). This is the CVE
+named in the security-vendor coverage found in the "Independent coverage"
+subsection above.
+
+The vendor response pattern this check found is consistently proactive: a
+`patched_versions` field is set on every one of the 647 advisories at
+publish time, all 14 critical-severity ones are credited to named external
+individuals or a named external security lab (`AntAISecurityLab`), and the
+one advisory independently cross-referenced against an outside write-up
+shows a same-day fix. This is a materially different pattern from both
+Hermes's "vendor did not respond" VulDB entries and Omniroute's single
+same-day reply to one Socket.dev finding: it reads as routine, high-volume,
+coordinated disclosure rather than an isolated response to an isolated
+report.
+
+#### Verdict
+
+The identity behind the project is real, current, and traceable to a named
+individual (Peter Steinberger, `steipete`) independently confirmed by
+outside press coverage, not a pseudonymous or unverifiable maintainer. Scale
+figures moved modestly upward since #165, the same direction Hermes showed.
+Where this check diverges sharply from both Hermes and Omniroute is volume
+and shape: a single, highly dominant commit author against a comparably
+sized but thinner-active contributor pool; a near-daily release cadence; a
+namesake PyPI package that is not this project at all, next to a cleanly
+matching npm publisher; extensive, repeated, named third-party security
+coverage rather than an absence; and a security-advisory record two orders
+of magnitude larger than either other candidate, but one where, on the
+evidence found, disclosure is consistently paired with an already-shipped
+fix and external credit rather than an unresolved backlog. None of this is
+disqualifying on its own: a personal-assistant product with broad tool and
+data access, covered this heavily by security researchers, is exactly the
+shape of project that generates a large, well-handled advisory record, but
+the pattern is different enough from both other candidates that it should
+carry forward as its own line into whichever ticket writes the final
+recommendation, not be treated as an equivalent "provenance clear" verdict.
+
 ---
 
-This section covers #196 (165-01) only. OpenClaw's equivalent footprint,
-storage, and provenance check (#197/165-02), the provider/secrets inventory
-across both candidates (#198/165-03), use-case analysis (#199/165-04), the
-local-inference/VRAM check (#200/165-05), exposure posture (#201/165-06),
-and the final comparison and recommendation (#202/165-07) are all follow-on
-tickets against this same file.
+Sections 1 and 2 cover #196 (165-01, Hermes) and #197 (165-02, OpenClaw).
+The provider/secrets inventory across both candidates (#198/165-03),
+use-case analysis (#199/165-04), the local-inference/VRAM check
+(#200/165-05), exposure posture (#201/165-06), and the final comparison and
+recommendation (#202/165-07) are all follow-on tickets against this same
+file.
