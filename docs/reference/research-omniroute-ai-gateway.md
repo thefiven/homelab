@@ -2,18 +2,21 @@
 
 **Date:** 2026-08-19
 **Status:** in progress. Covers #189 (164-01, resource footprint, section 1
-below) and #190 (164-02, deployment shape, section 2 below). Secrets
-inventory (#191, 164-03), provenance check (#192, 164-04), exposure posture
-(#193, 164-05), cost/routing impact (#194, 164-06), and the recommendation
-(#195, 164-07) are follow-on tickets.
+below), #190 (164-02, deployment shape, section 2 below), and #191 (164-03,
+secrets inventory, section 3 below). Provenance check (#192, 164-04),
+exposure posture (#193, 164-05), cost/routing impact (#194, 164-06), and the
+recommendation (#195, 164-07) are follow-on tickets.
 **Sources:** primary only, per this repo's `/research` convention: the
 project's own repository (`docker-compose.yml`, `Dockerfile`,
-`docs/reference/ENVIRONMENT.md`, `docs/architecture/cluster-decisions.md`,
-`docs/guides/DOCKER_GUIDE.md`, `docs/guides/SETUP_GUIDE.md`), its README,
-its own GitHub issue tracker for real, closed reports of measured memory
-use, and this repository's own existing `workloads/` manifests
-(`workloads/immich/`) as the deployment precedent being compared against.
-Every claim carries its URL inline.
+`docs/reference/ENVIRONMENT.md`, `docs/reference/FREE_TIERS.md`,
+`docs/architecture/cluster-decisions.md`, `docs/guides/DOCKER_GUIDE.md`,
+`docs/guides/SETUP_GUIDE.md`), its README, its own GitHub issue tracker for
+real, closed reports of measured memory use, and this repository's own
+existing `workloads/` manifests (`workloads/immich/`, including
+`workloads/immich/secrets/immich-postgres.sops.yaml` and
+`server-deployment.yaml`'s `secretKeyRef` usage) and `docs/adr/0009-secrets-sops-age.md`
+as the SOPS+age precedent being compared against. Every claim carries its
+URL inline.
 
 ---
 
@@ -275,7 +278,164 @@ Helm chart exists to shortcut that authoring.
 
 ---
 
-The secrets inventory (#191/164-03), the provenance check (#192/164-04),
-the exposure posture (#193/164-05), cost/routing impact against calling
-Anthropic directly (#194/164-06), and the recommendation (#195/164-07) are
-follow-on tickets.
+## 3. Secrets inventory: provider keys, keyless options
+
+### 3.1 Keyless by default: the baseline install needs no provider secret
+
+The README's own framing is unambiguous: "Works the second you install it —
+no keys, no config," with "Keyless free providers OpenCode Free and Felo
+... pre-wired into the auto combo, so a fresh install responds out of the
+box"
+(<https://raw.githubusercontent.com/diegosouzapw/OmniRoute/main/README.md>).
+The Quick Start section repeats the same pattern for the first
+Dashboard-driven provider connection: "Connect a FREE provider (no
+signup)," either Kiro AI ("free Claude, ~50 credits/month per account") or
+OpenCode Free ("no auth"), same source. Neither of these two onboarding
+paths asks for a provider API key at all: OmniRoute's minimum viable
+deployment carries zero provider-credential secrets. `docs/reference/FREE_TIERS.md`'s
+own "TL;DR" table gives the same picture at scale: its "documented
+recurring grant (steady)" of ~1.53B tokens/month, aggregated across 43
+free-tier pools
+(<https://raw.githubusercontent.com/diegosouzapw/OmniRoute/main/docs/reference/FREE_TIERS.md>),
+is reached the same way: most of that pool is either fully keyless or
+reached through a Dashboard-driven OAuth/cookie connection (3.4 below), not
+a static key an operator has to source and hold.
+
+### 3.2 What's required regardless of provider choice: four app secrets, one recommended
+
+`docs/reference/ENVIRONMENT.md` section 1 ("Required Secrets") names four
+variables the application "will either refuse to start or operate with
+insecure defaults" without:
+
+| Variable | Default | What it protects |
+| --- | --- | --- |
+| `JWT_SECRET` | _(none)_ | "Signs/verifies all dashboard session cookies (JWT)" |
+| `API_KEY_SECRET` | _(none)_ | "AES encryption key for API key values at rest in SQLite" |
+| `INITIAL_PASSWORD` | `CHANGEME` | Initial admin dashboard password ("kept obviously insecure to force a change") |
+| `OMNIROUTE_WS_BRIDGE_SECRET` | _(unset)_ | Internal Codex Responses WebSocket bridge auth, "**REQUIRED in production** — when unset, all WS bridge requests are rejected" |
+
+(<https://raw.githubusercontent.com/diegosouzapw/OmniRoute/main/docs/reference/ENVIRONMENT.md>,
+section 1 and section 4). None of these four depend on which providers get
+connected: they gate the dashboard and the gateway's own API-key issuance,
+present in every deployment including the fully keyless one in 3.1.
+
+A fifth variable is recommended, not required: `STORAGE_ENCRYPTION_KEY`,
+"AES key for full SQLite database encryption at rest," _(empty = disabled)_
+by default (ENVIRONMENT.md section 2). ENVIRONMENT.md's unnumbered
+"Deployment Scenarios" section (after section 23, "GitHub Integration")
+includes it in "Docker Production" and "VPS with Reverse Proxy" alongside
+the four required secrets, but omits it from "Minimal Local Development"
+and "Air-Gapped / CI." Section 3.3 below is why leaving it unset matters
+here specifically.
+
+### 3.3 Provider credentials: three storage paths, only one covered by encryption-at-rest
+
+`API_KEY_SECRET` (3.2) encrypts "API key values ... in SQLite": this is
+scoped to the API keys OmniRoute itself issues to its own `/v1` clients
+(Claude Code, in this platform's case), not to the upstream provider
+credentials OmniRoute holds on the client's behalf. Those are a separate
+concern, and ENVIRONMENT.md section 14 states plainly where they live:
+
+> API keys for providers that use direct authentication. **Preferred
+> setup:** Dashboard → Providers → Add API Key. Setting via environment
+> variables is an alternative for Docker or headless deployments.
+
+with a note attached to the (now largely retired) env-var path: "those
+providers rely exclusively on Dashboard / `data/provider-credentials.json`
+/ the encrypted DB" (same source, section 14). That sentence names three
+storage locations for a Dashboard-added provider credential, not one:
+the Dashboard UI itself is the entry point, not a store; "the encrypted
+DB" is SQLite, and *encrypted* here is conditional on `STORAGE_ENCRYPTION_KEY`
+being set (3.2): with it unset (the default), the DB is plaintext SQLite
+on disk; and `data/provider-credentials.json` is named as a distinct file
+under `DATA_DIR`, with no encryption claim attached to it anywhere checked
+in ENVIRONMENT.md, the README, or the Docker/setup guides, a second gap
+alongside the SQLite-encryption default already being off. Practically, for
+this platform: leaving `STORAGE_ENCRYPTION_KEY` unset means any
+Dashboard-added provider key ends up as plaintext on the same `/app/data`
+persistent volume as the audit-log SQLite database from section 1.4.
+Setting it is the one action that closes both gaps at once for the
+DB-resident path; nothing found closes the `provider-credentials.json` path
+specifically, which argues for treating the PV itself, not just the DB
+file, as secret-adjacent storage.
+
+Only two providers still accept a static `{PROVIDER_ID}_API_KEY` environment
+variable as of the version checked: `DEEPSEEK_API_KEY` (DeepSeek) and
+`NVIDIA_API_KEY` (NVIDIA NIM). Nine others (Groq, xAI, Mistral, Perplexity,
+Together AI, Fireworks, Cerebras, Cohere, Nebius, and Qianfan) had their
+static env-var form removed in v3.8.0 "because the runtime no longer reads
+them" (ENVIRONMENT.md section 14 and its "Audit: Removed / Dead Variables"
+appendix); connecting any of those now goes exclusively through the
+Dashboard, landing in one of the two storage paths above.
+
+### 3.4 OAuth-based provider connections: mostly public clients, a few need a registered secret
+
+Section 11 ("OAuth Provider Credentials") lists the coding-agent and
+assistant providers OmniRoute can connect via OAuth. Most ship as public
+OAuth clients needing no secret at all: Claude Code/Anthropic ("Public
+client — no secret needed"), Codex/OpenAI ("Public client"), Kimi Coding
+("Public client"), GitHub Copilot ("Public client"), but three need a
+matching `_CLIENT_SECRET` registered by the operator: Gemini (Google),
+Antigravity (Google), and GitLab Duo. The section's own framing caps how far
+"built-in" goes: "Built-in credentials for **localhost development**. For
+remote deployments, register your own at each provider's developer console"
+(ENVIRONMENT.md section 11). This platform's default exposure posture is
+Tailscale-only per #164's own scoping, not `localhost` from the operator's
+browser. Whether a Tailscale-only origin counts as "remote" for a given
+provider's OAuth redirect-URI validation (and therefore requires the
+operator to register their own client + secret before that specific
+provider connects) is a fact this ticket did not check per-provider; it is
+handed to #193 (164-05, exposure posture) as a concrete dependency, not
+assumed either way here.
+
+### 3.5 Out of scope for this deployment: cloud sync, GitHub issue reporting
+
+Two further secret-shaped variables exist but gate features this platform
+has no reason to turn on: `OMNIROUTE_CLOUD_SYNC_SECRET` verifies a "Cloud
+Sync" premium feature (`CLOUD_URL` empty by default, ENVIRONMENT.md section
+7) that this self-hosted deployment has no account for, and
+`GITHUB_ISSUES_TOKEN`/`GITHUB_TOKEN` only power an opt-in "report issues
+directly from the Dashboard" button (ENVIRONMENT.md section 23). Neither is
+required, and neither should be added to the secret inventory below unless
+a later ticket turns that feature on.
+
+### 3.6 SOPS+age boundary translation
+
+ADR-0009 settles the encryption mechanism (SOPS+age); this repo's own
+`workloads/immich/` already sets the concrete precedent for what a workload
+does with it: one SOPS-encrypted `Secret` manifest under the workload's own
+`secrets/` directory (`workloads/immich/secrets/immich-postgres.sops.yaml`),
+consumed by `server-deployment.yaml` via `valueFrom.secretKeyRef` per
+variable, not `envFrom`. A `workloads/omniroute/secrets/omniroute-app.sops.yaml`
+following that same shape covers the whole *required* inventory from 3.2 in
+one file: `JWT_SECRET`, `API_KEY_SECRET`, `INITIAL_PASSWORD`,
+`OMNIROUTE_WS_BRIDGE_SECRET`, plus `STORAGE_ENCRYPTION_KEY`. That fifth
+variable is recommended rather than required by upstream, but per 3.3 it is
+the only lever this repo has over whether provider credentials sitting in
+OmniRoute's own SQLite are plaintext on the PV, which makes it worth
+treating as required for this deployment even though OmniRoute's own docs
+don't. `DEEPSEEK_API_KEY` / `NVIDIA_API_KEY` (3.3) and any OAuth client
+secret from 3.4 would join the same Secret only if and when those specific
+providers actually get connected: this ticket found no provider connection
+this deployment currently plans to make through an env-var-backed key, per
+#164's own scoping (Claude Code as the only committed consumer so far,
+itself an OAuth public client per 3.4).
+
+One boundary this deployment cannot draw the same way Immich's is: Immich's
+DB credentials are the *entire* secret surface for that workload, so one
+SOPS file closes the loop. Here, a provider credential added through the
+Dashboard UI after deployment (the "preferred setup" per 3.3) lands inside
+OmniRoute's own SQLite or `provider-credentials.json`, i.e. inside the
+workload's data volume, not in a file this repo's Git history or SOPS
+tooling ever sees or manages.
+
+`STORAGE_ENCRYPTION_KEY` bounds that risk for the DB-resident half; nothing
+checked here bounds it for `provider-credentials.json`. That residual gap
+is a fact for #195 (164-07) to weigh, not something this ticket's own scope
+resolves.
+
+---
+
+The provenance check (#192/164-04), the exposure posture (#193/164-05),
+cost/routing impact against calling Anthropic directly (#194/164-06), and
+the recommendation (#195/164-07) are follow-on tickets.
