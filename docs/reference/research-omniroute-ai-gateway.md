@@ -2,21 +2,27 @@
 
 **Date:** 2026-08-19
 **Status:** in progress. Covers #189 (164-01, resource footprint, section 1
-below), #190 (164-02, deployment shape, section 2 below), and #191 (164-03,
-secrets inventory, section 3 below). Provenance check (#192, 164-04),
-exposure posture (#193, 164-05), cost/routing impact (#194, 164-06), and the
-recommendation (#195, 164-07) are follow-on tickets.
+below), #190 (164-02, deployment shape, section 2 below), #191 (164-03,
+secrets inventory, section 3 below), and #192 (164-04, provenance check,
+section 4 below). Exposure posture (#193, 164-05), cost/routing impact
+(#194, 164-06), and the recommendation (#195, 164-07) are follow-on tickets.
 **Sources:** primary only, per this repo's `/research` convention: the
 project's own repository (`docker-compose.yml`, `Dockerfile`,
 `docs/reference/ENVIRONMENT.md`, `docs/reference/FREE_TIERS.md`,
 `docs/architecture/cluster-decisions.md`, `docs/guides/DOCKER_GUIDE.md`,
-`docs/guides/SETUP_GUIDE.md`), its README, its own GitHub issue tracker for
-real, closed reports of measured memory use, and this repository's own
-existing `workloads/` manifests (`workloads/immich/`, including
-`workloads/immich/secrets/immich-postgres.sops.yaml` and
-`server-deployment.yaml`'s `secretKeyRef` usage) and `docs/adr/0009-secrets-sops-age.md`
-as the SOPS+age precedent being compared against. Every claim carries its
-URL inline.
+`docs/guides/SETUP_GUIDE.md`, `docs/security/SOCKET_DEV_FINDINGS.md`,
+`SECURITY.md`), its README, its own GitHub issue tracker for real, closed
+reports of measured memory use and of the Socket.dev supply-chain finding
+(section 4), the GitHub REST API for the repository's and owner's own
+metadata (creation dates, contributor/commit counts, commit-signature
+verification), the npm registry API for the published package's metadata
+and download counts, the public GitHub Advisory Database, and this
+repository's own existing `workloads/` manifests (`workloads/immich/`,
+including `workloads/immich/secrets/immich-postgres.sops.yaml` and
+`server-deployment.yaml`'s `secretKeyRef` usage) and
+`docs/adr/0009-secrets-sops-age.md` as the SOPS+age precedent being compared
+against. Every claim carries its URL inline. Figures pulled via API are
+timestamped to this check (2026-08-19); they move as the project grows.
 
 ---
 
@@ -436,6 +442,250 @@ resolves.
 
 ---
 
-The provenance check (#192/164-04), the exposure posture (#193/164-05),
-cost/routing impact against calling Anthropic directly (#194/164-06), and
-the recommendation (#195/164-07) are follow-on tickets.
+## 4. Provenance check: maintainer, commits, advisories
+
+### 4.1 Maintainer identity: an established personal account, not a throwaway
+
+The GitHub account is `diegosouzapw`, created 2014-06-29 (12 years old as of
+this check), not a fresh account spun up around the repository: 1,345
+followers, 70 public repositories, profile name "Diego Rodrigues de Sa e
+Souza," company "CDWA Solutions," location "São Paulo - Brasil," a personal
+blog domain (`omniroute.online`), and a Twitter handle
+(`@diegosouzapw`)(`GET /users/diegosouzapw`,
+<https://api.github.com/users/diegosouzapw>). The bio self-describes as
+"Creator & maintainer of OmniRoute ... built with 460+ contributors,"
+consistent with the repository being a personal-account project the same
+account has driven since creation, not an anonymous or corporate front. The
+bio's "460+" is somewhat higher than the 412 distinct contributor logins
+this check actually counted (4.2); the gap is small enough, and this kind
+of promotional-copy figure inconsistent enough elsewhere (search coverage
+in 4.4 separately turned up "450+" and "over 280" for the same claim in
+different write-ups from different months), to read as an unmaintained
+round number rather than a fabricated one, but it was not reconciled to an
+exact source.
+
+The npm package's sole listed maintainer email
+(`diegosouza.pw@outlook.com`) matches the GitHub profile's public email
+exactly, and the package's `repository` field points back at
+`git+https://github.com/diegosouzapw/OmniRoute.git`
+(`GET https://registry.npmjs.org/omniroute`): the npm publisher and the
+GitHub account are the same identity by two independent registries
+agreeing, not just by the README's say-so.
+
+### 4.2 Commit and contributor authorship: one dominant author, real breadth beneath
+
+`GET /repos/diegosouzapw/OmniRoute/contributors` lists 412 distinct
+contributor logins (paginated, counted in full). Contribution counts are
+sharply concentrated: `diegosouzapw` alone shows 4,202 contributions; the
+next-highest, `oyi77`, shows 217, then `backryun` at 216, `dependabot[bot]`
+at 139, and a long tail down to single-digit counts
+(<https://api.github.com/repos/diegosouzapw/OmniRoute/contributors>). That
+shape, one author an order of magnitude ahead of everyone else, is
+consistent with a maintainer-led project that does receive real outside
+contributions, not with either a solo project dressed up to look
+collaborative (the next 30+ logins each show double-digit real
+contribution counts, not padding) or a project actually run by a diffuse
+team (no second author is remotely close to the top).
+
+The most recent 30 commits as of this check
+(<https://api.github.com/repos/diegosouzapw/OmniRoute/commits>) name eleven
+distinct authors across a 19-hour window, `diegosouzapw` interleaved with
+`backryun`, `adevwithpurpose`, `hartmark`, and others: day-to-day activity,
+not a history that goes quiet between periodic solo pushes. Of the sample
+checked, commits authored through GitHub's own web-merge flow (committer
+`GitHub <noreply@github.com>`) carry a GitHub-signed `verified: true`
+status; this confirms the merge went through GitHub's UI, not that the
+named author independently holds a personal signing key, a distinction
+worth keeping since "verified" badges here attest to the platform, not to
+the contributor.
+
+One operational oddity, noted but not weighted as a trust signal either
+way: the repository's `default_branch` is `release/v3.8.50`, not `main` or
+`master` (`GET /repos/diegosouzapw/OmniRoute` →
+`.default_branch`). A `main` branch does exist and is kept current (used
+throughout sections 1-3 above and this section for raw-file fetches); the
+project simply points GitHub's default view at its current release branch
+instead.
+
+### 4.3 Scale, re-measured: #164's cited figures against this check's numbers
+
+#164's own framing cited "49.5k stars / 6.7k forks / 412 open issues on a
+six-month-old repository." Re-measured today: 50,812 stargazers, 6,926
+forks, 388 open issues, 294 subscribers, repository created 2026-02-13
+(<https://api.github.com/repos/diegosouzapw/OmniRoute>), a little over six
+months old as of this check (2026-08-19). Stars and forks are both
+slightly higher than #164's figures, consistent with continued growth
+rather than a stat that was inflated once and has since stalled; open
+issues moved the other way, down from 412 to 388, which reads as normal
+issue-tracker churn (closures outpacing new reports over the intervening
+period) rather than as evidence either way on the provenance question.
+The 412-contributor count in 4.2 lands, by coincidence, on the exact
+number #164 cited for open issues at the time it was written; they are two
+unrelated metrics that happened to match on that earlier date, not a
+corroboration of each other, and the open-issues figure has since moved
+off it while the contributor count is independent of it.
+
+Per this repository's own prior finding on Omniroute, Hermes, and OpenClaw
+(recorded outside this doc: the operator has independently verified these
+three candidates through channels of their own before #163-165 were
+opened), whether a growth curve this fast is itself plausible for a
+six-month-old personal-account project is a base-rate question this
+provenance check cannot settle by re-counting stars; it is not re-argued
+here. What follows (4.4-4.6) is what a provenance check *can* settle:
+whether the identity behind the project is real and consistent, and how it
+behaved the one time independent tooling raised a concrete concern.
+
+### 4.4 Independent coverage: mostly SEO-shaped, one substantive signal
+
+Search coverage returns several third-party write-ups (compsmag.com,
+aitoolly.com, a Medium post, a SourceForge mirror listing, a Pinggy.io blog
+post), all published within the repository's own lifetime (2026), generally
+positive, and shaped like SEO/affiliate content rather than independent
+security or engineering review: none were found performing their own
+technical verification of a claim, each substantially restates the
+README. None is cited further here, consistent with this repo's
+primary-source-only convention; they are named only to record that the
+"independent coverage" check in #164's story 6 was performed and came back
+thin.
+
+One genuinely independent, primary-sourced signal exists: an automated
+supply-chain scan by a third-party tool (Socket.dev) against the published
+npm artifact, raised as a GitHub issue against the repository itself.
+Section 4.5 covers it in full, since it is the substantive part of this
+provenance check.
+
+### 4.5 The Socket.dev finding and the maintainer's response
+
+Socket.dev's automated scanner detected the finding against
+`omniroute@3.8.5` at 2026-05-27T10:31 UTC (timestamp given in the issue
+body below): a Supply Chain Security score of 48 and six "AI-detected
+potential malware" alerts, plus separate obfuscated-code and
+install-script alerts. A user (`a-dmx`) opened it as GitHub issue #2863
+the next day, at 2026-05-28T15:29 UTC
+(<https://github.com/diegosouzapw/OmniRoute/issues/2863>). The flagged
+code paths, quoted from the issue: a root-CA/MITM installer, a route
+reading OS-keychain credentials for a "Zed import" feature, an elevated
+PowerShell/process-spawn helper, an embedded-service supervisor
+(`9router`), and a route synchronizing provider credentials to an
+operator-configured `CLOUD_URL`. Read cold, that is exactly the kind of
+behavior that would matter for a tool proxying provider API keys, which is
+why this ticket treats it as the central finding rather than a footnote.
+
+The maintainer's first reply followed at 2026-05-28T18:45 UTC, about three
+hours after the issue was opened, and addressed each of the six findings
+individually: four were characterized as documented, opt-in features
+gated behind loopback-only route classification (enforced before any auth
+check, per the reply's own routing table) and behind explicit user action
+in the dashboard, not code that runs on install or unattended, with the
+"obfuscated code" alert attributed to Next.js's own standalone-build
+minification rather than deliberate obfuscation. Two of the six were
+acknowledged as real gaps: a Cloud Sync credential-overwrite path with no
+signature check, and a single-step keychain-import flow with no
+per-credential confirmation. Both were fixed the same day, in a linked PR
+(#2871, merged to a `release/v3.8.6` branch) referenced in a second
+comment at 2026-05-28T19:58 UTC: the Cloud Sync path now requires an
+`HMAC-SHA256` signature (`crypto.timingSafeEqual`) before accepting a
+credential overwrite, defaulting off unless
+`OMNIROUTE_CLOUD_SYNC_SECRETS=true` is set; the keychain import became a
+two-step discover-then-confirm flow with per-credential fingerprint
+matching. The fix shipped with 24 new unit tests named in the reply, a
+maintainer-authored attestation document
+(`docs/security/SOCKET_DEV_FINDINGS.md`), and a new opt-in build flag,
+`OMNIROUTE_BUILD_PROFILE=minimal`, that physically replaces the four
+sensitive modules with stub files at webpack-compile time so the flagged
+code paths are absent from the published bundle entirely. The reporter's
+own follow-up comment called it "a really responsible maintainer response."
+
+This ticket verified the durable parts of that claim rather than taking
+the issue thread's word for it: `docs/security/SOCKET_DEV_FINDINGS.md`
+exists on the current `main` branch and its content matches the reply's
+description (per-finding source-file map and attestation), `SECURITY.md`
+still carries the linked "Supply-chain scanner findings" section, and
+`OMNIROUTE_BUILD_PROFILE` is still documented in the current
+`docs/reference/ENVIRONMENT.md` (row 277 as checked) exactly as described.
+One promised follow-through was checked and not found: the reply frames
+`OMNIROUTE_BUILD_PROFILE=minimal` output as "intended to be published as
+`omniroute-secure`," but no such package exists on the npm registry as of
+this check (`GET https://registry.npmjs.org/omniroute-secure` → 404). The
+hardening is real and usable today (an operator can set the env var and
+build from source), but the separately-publishable, separately-auditable
+artifact the reply floated has not shipped: a gap between what was
+promised and what exists, not a gap in the fix itself.
+
+No formal security advisory was ever filed over this finding: the
+repository's own Security Advisories list is empty
+(`GET /repos/diegosouzapw/OmniRoute/security-advisories` → `[]`), and a
+targeted query against the public GitHub Advisory Database for packages
+affecting `omniroute` returns no results
+(`GET https://api.github.com/advisories?affects=omniroute` → `[]`). The
+Socket.dev flag never escalated to a GHSA. Measured end to end: the issue
+closed at 2026-05-28T20:25 UTC, under five hours after it was opened and
+about 34 hours after Socket.dev's own detection timestamp.
+
+### 4.6 npm package integrity
+
+`omniroute` on the npm registry: 288 published versions since
+2026-02-14, most recent `3.8.49` (`dist-tags.latest`), MIT license, sole
+maintainer email matching the GitHub owner (4.1)
+(<https://registry.npmjs.org/omniroute>). 288 versions over roughly six
+months is close to 1.6 releases/day, an extremely high cadence that
+corroborates, from an independent angle, section 1.3's finding of ongoing
+churn on the concurrency/memory boundary (issues opening and closing
+across adjacent point releases) rather than a project that ships rarely
+and carefully. Download volume is real: 272,196 downloads in the 30 days
+ending 2026-08-18, 58,710 in the trailing week
+(<https://api.npmjs.org/downloads/point/last-month/omniroute>), usage at
+a scale that would be unusual to fabricate and consistent with the
+star/fork counts in 4.3, though this check cannot separate genuine
+installs from CI/bot traffic.
+
+### 4.7 What this check did not do
+
+No line-by-line diff review of PR #2871 or any other individual commit was
+performed; the fix was verified by confirming its described artifacts
+(attestation doc, env var, SECURITY.md section) exist and match the
+description, not by re-deriving the security properties from source. No
+scan of the current `3.8.49` npm artifact was run against Socket.dev, Snyk,
+or an equivalent scanner directly: 4.5 relies on the historical issue
+thread and the currently-published documentation, not a fresh scan. npm's
+provenance-attestation and 2FA status for the `omniroute` package are not
+exposed by the public registry API and were not checked by another means.
+Several similarly-named, unrelated repositories surfaced during search
+(other authors' own `omniroute`-named forks and clones, and an unrelated
+project, `decolua/9router`, separately flagged by Socket.dev under a
+different maintainer) were not cross-checked for shared code or maintainer
+overlap with `diegosouzapw/OmniRoute`; nothing found suggests a
+connection, but it was not actively ruled out either.
+
+### 4.8 Verdict
+
+The identity behind the project is real, consistent across GitHub and npm,
+and has maintained the account for over a decade: not an anonymous or
+disposable presence assembled around one repository. Commit and
+contributor history shows one clearly dominant author with a genuine,
+daily-active outside contributor base beneath that account, not a solo
+project dressed up with padding. No open security advisory exists against
+the package. The one substantive independent scrutiny event found, an
+automated supply-chain scan flagging credential-adjacent code paths
+(exactly the category of concern that would matter most for a gateway
+that proxies provider API keys), produced a same-day, per-finding
+technical reply, two real fixes shipped within about 34 hours with tests
+and a public attestation document, and durable documentation that still
+matches the claim three months later. That is evidence of a maintainer who
+responds substantively to scrutiny rather than one who goes quiet or
+hand-waves when actually challenged, which is the part of "provenance"
+this ticket's checklist (maintainer identity, commit authorship,
+independent coverage, advisories) can speak to directly.
+
+What it does not do is resolve the base-rate question #164 itself raised:
+whether this growth curve is ordinary for a six-month-old, personal-account
+project. This check does not attempt to, consistent with the note in
+4.3. Within the scope this ticket actually asks a provenance check to
+cover, nothing found here argues against proceeding to #193-195; the
+Socket.dev episode is the one fact from this section worth carrying
+forward into #195's recommendation explicitly, since it is the closest
+thing to a real incident this project has had.
+
+The exposure posture (#193/164-05), cost/routing impact against calling
+Anthropic directly (#194/164-06), and the recommendation (#195/164-07) are
+follow-on tickets.
