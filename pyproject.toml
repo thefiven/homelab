@@ -1,0 +1,8 @@
+# black and isort config for scripts/*.py (#252). No third-party
+# dependency the scripts themselves need lives here - this repo has no
+# Python package to build, just converted CLI scripts under scripts/.
+#
+# black itself needs no [tool.black] table - 88 columns is already its
+# default, and it auto-discovers this file as the project root.
+[tool.isort]
+profile = "black"

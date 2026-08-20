@@ -41,4 +41,25 @@ See `docs/agents/domain.md`.
 
 After `/wizard` regenerates a wizard script, replace its inlined library
 section with `source "$(dirname "${BASH_SOURCE[0]}")/lib/wizard.sh"` before
-committing.
+committing. Wizard-generated scripts stay Bash even as other scripts convert
+to Python (see below) - the `/wizard` skill's generator only produces Bash,
+and converting its output without converting the generator would just drift
+the two apart.
+
+### Python scripts
+
+`scripts/` is Bash by default, converted to Python one script at a time,
+each conversion its own ticket opened when that script is next touched (no
+bulk rewrite). Conventions for those conversions:
+
+- Standard-library-first; add a third-party dependency only when a specific
+  script genuinely needs one.
+- Light type hints, no mypy enforcement.
+- Keep the `--self-check` CLI convention these scripts already use instead
+  of introducing a test framework.
+- Bare `#!/usr/bin/env python3` shebang - no PEP 723 inline metadata or uv
+  until a script actually needs a dependency.
+- `.py` naming for converted scripts.
+
+black, isort, and flake8 run on `scripts/*.py` in the same pre-commit/CI
+gate as shellcheck (`pyproject.toml`, `.flake8`).
