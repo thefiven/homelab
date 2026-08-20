@@ -1,13 +1,13 @@
 # Personal AI assistant: Hermes vs OpenClaw
 
-**Date:** 2026-08-19
-**Status:** in progress. Covers #196 (165-01, Hermes footprint/storage/provenance,
+**Date:** 2026-08-19, recommendation added 2026-08-20.
+**Status:** complete. Covers #196 (165-01, Hermes footprint/storage/provenance,
 section 1 below), #197 (165-02, OpenClaw's equivalent check, section 2 below),
 #198 (165-03, provider integration and secrets for both, section 3 below),
 #199 (165-04, use-case analysis, section 4 below), #200 (165-05,
-VRAM/local inference check, section 5 below), and #201 (165-06, exposure and
-messaging platform access, section 6 below). The final comparison and
-recommendation (#202/165-07) is a follow-on ticket against this same file.
+VRAM/local inference check, section 5 below), #201 (165-06, exposure and
+messaging platform access, section 6 below), and #202 (165-07, the final
+comparison and recommendation, section 7 below).
 **Sources:** primary only, per this repo's `/research` convention: the
 project's own repository (`README.md`, `Dockerfile`, `docker-compose.yml`,
 `.env.example`, `hermes_state_search.py`, and the documentation site's source
@@ -1822,8 +1822,133 @@ deployment ticket has to add.
 
 ---
 
-Sections 1 through 6 cover #196 (165-01, Hermes), #197 (165-02, OpenClaw),
+## 7. Recommendation (#165 story 11 and the final go/no-go)
+
+**Neither, for now.** Adopt nothing against this ticket. The gap #165 itself
+opened with, "neither has a defined use case on this platform yet," is still
+open after sections 1 through 6: 4.1 found no ADR, no `CONTEXT.md` entry, and
+no other issue naming a task this platform needs a chat-reachable agent for.
+#165's own story 10 named this outcome as fully acceptable on its own, "same
+as the Flux-UI and Omniroute tickets, provenance concerns alone could be
+sufficient to close this without a resource discussion"; here the absence of
+a stated need, not provenance, is what closes it, and every other axis this
+investigation measured adds friction rather than resolving that absence.
+
+### Per-axis summary
+
+- **Footprint (1.1, 2.1) argues against both, not just one.** Both
+  candidates' documented minimums already match ADR-0002's entire 1 GiB
+  Application line, and both have wide, currently open clusters of real
+  memory-growth reports well past their own "recommended" figures: a
+  5+ GB dashboard leak and a ~50 GB virtual-memory report for Hermes, a
+  15.5 GB RSS crash report and a degraded-but-alive failure mode at 1.8 GiB
+  for OpenClaw. Neither candidate's upstream project has this solved; a
+  deployment ticket for either would need to budget several times the
+  standard slot and treat multi-day memory growth as the norm, not a
+  worst case.
+- **Storage (1.2, 2.2) is not a blocker for either.** Both fit ADR-0014's
+  static-PV pattern as-is, the same shape as Immich's Postgres volume. This
+  axis does not distinguish the candidates or argue against adoption; it
+  only sets what a future deployment ticket would need to size.
+- **Provenance (1.3, 2.3) is non-disqualifying for both, but not equivalent
+  to a clean pass for either.** Hermes carries one still-open, unpatched
+  medium-severity advisory against its current release and a "vendor did not
+  respond" pattern across most of its VulDB-sourced entries. OpenClaw
+  carries no comparable open advisory, but has drawn sustained, named
+  third-party security coverage (Bitsight, Northeastern University)
+  describing tens of thousands of default-exposed internet-facing instances
+  and quoting its own creator, "most non-techies should not install this."
+  Section 6 already found that this platform's own deployment shape, private
+  by default over Tailscale per ADR-0011, sidesteps the exposure pattern
+  that coverage is about; the finding still stands as a real difference in
+  each project's public track record, not something either candidate's docs
+  can undo.
+- **Provider integration and secrets (section 3) remove, rather than add, a
+  reason to prefer one over the other.** Both already ship a first-party
+  multi-provider aggregator of their own (Nous Portal, ClawRouter), so
+  #165's story 9 question, whether routing either through Omniroute changes
+  the calculus, resolves to "it would not": #164 already answered "no" to
+  deploying Omniroute at all, and 3.5 found neither candidate's own docs
+  name Omniroute as an integration target regardless, since neither needs a
+  third aggregation layer on top of the one it already ships. The
+  Telegram/Discord/Slack tokens both need are an ordinary SOPS+age fit
+  (3.4); the WhatsApp/Signal linked-device sessions are storage-permissions
+  facts, not Kubernetes Secrets, on both candidates equally.
+- **VRAM (section 5) clears both.** Neither candidate's default,
+  recommended path touches local GPU or VRAM; ADR-0002's zero-VRAM
+  allocation stays closed for either, as long as no future deployment
+  authors a `models.providers.*`-style local-endpoint config without
+  separately reopening that ADR first (5.3).
+- **Exposure (section 6) clears both, and does not distinguish them either.**
+  Every named messaging platform is outbound-only by default on both
+  candidates (6.1), and both projects' own admin/control-surface defaults
+  fit ADR-0011's private-by-default posture without a new ticket, the same
+  way Immich already does (6.3). OpenClaw's own documentation independently
+  arrives at Tailscale Serve as its preferred remote-access pattern, this
+  platform's own standing mechanism; that is a point of comfort, not a
+  reason to prefer OpenClaw over Hermes, since Hermes reaches the same
+  ClusterIP-over-Tailscale shape just as directly.
+
+### One role, not two
+
+4.4 already found the two candidates identical enough at the mechanism level
+(same channel set, same aggregator-plus-direct-key shape, same
+SecretRef-adjacent credential model, same static-PV storage fit) that
+#165's Framing decision, one role unless research finds a genuine
+non-overlapping use case for each, stays a one-role decision. The two do
+diverge in what each is built for: Hermes's differentiators point at
+coding-agent work, the one task this platform's own tracker already runs
+(4.3); OpenClaw's point at a general device/companion brief nothing open on
+this platform has asked for. That divergence answers "if one, which one,"
+not "both," because only Hermes's side of the split matches a need this
+platform has already verified.
+
+### What each outcome gives up
+
+- **Neither (this recommendation):** gives up nothing this platform has
+  actually asked for today; the coding-agent-reachability use case 4.3
+  names is a plausible future want, not a stated one, and remains available
+  to revisit once it is. The cost of waiting is zero: nothing currently open
+  on this tracker depends on either candidate, the same "no priority
+  ordering... none of the three addresses a gap that costs anything today"
+  framing #165's own Further Notes already applied to this ticket relative
+  to its two siblings.
+- **Hermes alone:** would answer the one verified need (4.3) at the cost of
+  absorbing the heaviest measured footprint risk found in this file (a
+  ~50 GB virtual-memory report closed `not_planned`, section 1.1) and one
+  currently open, unpatched advisory (1.3), for a use case the operator has
+  still never stated as a requirement.
+- **OpenClaw alone:** would buy device/companion breadth (channel count,
+  future companion-app surface, 4.2) this platform has no verified need for
+  today, at the cost of a comparable footprint risk (2.1) and a public
+  security narrative (2.3) this platform's own private-by-default posture
+  mitigates but does not erase from OpenClaw's own track record.
+- **Both:** compounds the footprint and secrets-inventory cost of either
+  alone (sections 1, 2, 3) for two mechanically near-identical answers to
+  the same unverified need (4.4), the outcome #165's Framing decision
+  already argued against absent a genuine non-overlapping use case, which
+  this research did not find.
+
+### Revisit if
+
+A concrete, operator-stated use case for a chat-reachable agent on this
+platform is the one condition that reopens this ticket's "neither." On the
+evidence gathered here, that use case, if and when it is stated, should be
+checked against Hermes first: it is the only candidate whose own stated
+differentiators match a task this platform already verifiably runs (4.3),
+not because OpenClaw is disqualified, but because nothing found in sections
+1 through 6 gives OpenClaw's device/companion strengths a corresponding
+verified need to answer. Whichever candidate is revisited, sections 1
+through 6 of this file stay valid as the shape that deployment would take
+(footprint budget, storage PV, secrets split, exposure posture); only the
+use-case gap in section 4 needs closing first, by the operator, not by
+further research.
+
+---
+
+Sections 1 through 7 cover #196 (165-01, Hermes), #197 (165-02, OpenClaw),
 #198 (165-03, provider integration and secrets for both), #199 (165-04,
-use-case analysis), #200 (165-05, VRAM/local inference check), and #201
-(165-06, exposure and messaging platform access). The final comparison and
-recommendation (#202/165-07) is a follow-on ticket against this same file.
+use-case analysis), #200 (165-05, VRAM/local inference check), #201
+(165-06, exposure and messaging platform access), and #202 (165-07, the
+final comparison and recommendation). All seven sub-tickets of #165 are
+now closed.
