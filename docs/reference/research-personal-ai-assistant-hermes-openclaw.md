@@ -1641,11 +1641,11 @@ dashboard/API surface needs to stay private (6.2).
 
 | Platform | Hermes default | Hermes opt-in inbound alternative | OpenClaw default | OpenClaw opt-in inbound alternative |
 | --- | --- | --- | --- | --- |
-| Telegram | Long polling: "the gateway makes outbound requests to Telegram's servers to fetch new updates" | `TELEGRAM_WEBHOOK_URL` set: Telegram pushes to a public HTTPS URL, local listener default `127.0.0.1:8443` | Long polling ("Default is long polling") | `channels.telegram.webhookUrl` set: local listener default `127.0.0.1:8787`, needs a reverse proxy or `webhookHost: "0.0.0.0"` for public ingress |
+| Telegram | Long polling: "the gateway makes outbound requests to Telegram's servers to fetch new updates" | `TELEGRAM_WEBHOOK_URL` set: Telegram pushes to a public HTTPS URL, local listener port default `8443` (bind host not documented) | Long polling ("Default is long polling") | `channels.telegram.webhookUrl` set: local listener default `127.0.0.1:8787`, needs a reverse proxy or `webhookHost: "0.0.0.0"` for public ingress |
 | Discord | Gateway WebSocket, outbound-only; "not a webhook that replies statelessly" | none documented | Gateway WebSocket, outbound-only | none documented |
 | Slack | Socket Mode (`SLACK_APP_TOKEN`): "WebSocket — no public URL required" | none documented for Hermes | Socket Mode (default): "Public Gateway URL: Not required" | HTTP Request URLs mode: "Use HTTP mode when the Gateway has a public HTTPS endpoint" |
 | WhatsApp | Baileys bridge, QR-linked device session, "no public URL needed" | WhatsApp Business Cloud API (separate guide): "needs a public HTTPS URL so Meta can deliver inbound [messages]" | WhatsApp Web via Baileys, QR-linked ("Login is QR-only") | none documented (no Cloud API path in the official channel catalog) |
-| Signal | External `signal-cli` daemon, HTTP mode on `127.0.0.1:8080`, SSE stream in / JSON-RPC out | none, `signal-cli` itself is the only bridge either project supports | External `signal-cli` daemon (native or containerized), same JSON-RPC/SSE shape | none |
+| Signal | External `signal-cli` daemon, HTTP mode on `127.0.0.1:8080`, SSE stream in / JSON-RPC out | none, `signal-cli` itself is the only bridge either project supports | External `signal-cli` daemon: native mode is JSON-RPC + SSE (same shape as Hermes); container mode (`bbernhard/signal-cli-rest-api`) is REST + WebSocket instead | none |
 
 Sources: Hermes's `user-guide/messaging/telegram.md`, `discord.md`, `slack.md`,
 `whatsapp.md`, `whatsapp-cloud.md`, `signal.md`
@@ -1661,9 +1661,8 @@ access regardless") holds for both candidates on every one of the five named
 platforms, without exception, and without any candidate-specific caveat this
 check found. Nothing in either project's default configuration asks this
 platform's Immich-style "private-only" posture to change for messaging alone:
-outbound egress is not a public-exposure question ADR-0011 governs at all,
-matching Omniroute's own outbound-only shape
-(`research-omniroute-ai-gateway.md`). The one platform-shaped asymmetry is
+outbound egress is not a public-exposure question ADR-0011 governs at all.
+The one platform-shaped asymmetry is
 Hermes's separate WhatsApp Business Cloud API guide, a documented alternative
 to the default Baileys bridge that does need a public webhook URL; OpenClaw's
 official channel catalog names only the Baileys-style QR-linked path for
@@ -1712,10 +1711,11 @@ explicitly, detailed below:
   1.3 already found for Hermes.
 - **OpenAI-compatible API server** (`API_SERVER_ENABLED=true`, default port
   `8642`). Gated off by default; "to expose it beyond `127.0.0.1`... also set
-  `API_SERVER_HOST=0.0.0.0` and an `API_SERVER_KEY`," with the compose file's
-  own comment: "Opening any port on an internet facing machine is a security
-  risk. You should not do it unless you understand the risks"
-  (`website/docs/user-guide/docker.md`, "Where the API server").
+  `API_SERVER_HOST=0.0.0.0` and an `API_SERVER_KEY`," with the same doc
+  page's own prose warning, not a YAML comment in `docker-compose.yml`:
+  "Opening any port on an internet facing machine is a security risk. You
+  should not do it unless you understand the risks"
+  (`website/docs/user-guide/docker.md`, "Running in gateway mode").
 
 Both services run under `network_mode: host` in the shipped compose file, a
 choice the docs justify on a Docker mechanics ground unrelated to exposure
@@ -1726,9 +1726,10 @@ dashboard"). The bind defaults (loopback for both surfaces once enabled) are
 what actually governs reachability here, not the namespace choice.
 
 **OpenClaw** multiplexes everything onto one Gateway port (default `18789`):
-WebSocket, HTTP API (`/v1/*`, `/tools/invoke`, `/api/channels/*`), the Control
-UI single-page app, and hosted widget/canvas assets
-(`docs/gateway/security/index.md`, "Bind, port, firewall"). `gateway.bind`'s
+WebSocket, the Control UI single-page app, and hosted widget/canvas assets
+(`docs/gateway/security/index.md`, "Bind, port, firewall"), plus an HTTP API
+(`/v1/*`, `/tools/invoke`, `/api/channels/*`) documented separately (same
+source, "Tailscale Serve identity headers"). `gateway.bind`'s
 documented default is `"loopback"`: "only local clients can connect"; `"lan"`,
 `"tailnet"`, and `"custom"` "expand the attack surface" and need auth plus a
 real firewall (same source). Gateway auth is "required by default - with no
