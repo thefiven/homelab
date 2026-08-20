@@ -4,10 +4,10 @@
 **Status:** in progress. Covers #196 (165-01, Hermes footprint/storage/provenance,
 section 1 below), #197 (165-02, OpenClaw's equivalent check, section 2 below),
 #198 (165-03, provider integration and secrets for both, section 3 below),
-#199 (165-04, use-case analysis, section 4 below), and #200 (165-05,
-VRAM/local inference check, section 5 below). Exposure posture (#201/165-06)
-and the final comparison and recommendation (#202/165-07) are follow-on
-tickets against this same file.
+#199 (165-04, use-case analysis, section 4 below), #200 (165-05,
+VRAM/local inference check, section 5 below), and #201 (165-06, exposure and
+messaging platform access, section 6 below). The final comparison and
+recommendation (#202/165-07) is a follow-on ticket against this same file.
 **Sources:** primary only, per this repo's `/research` convention: the
 project's own repository (`README.md`, `Dockerfile`, `docker-compose.yml`,
 `.env.example`, `hermes_state_search.py`, and the documentation site's source
@@ -19,13 +19,16 @@ under `website/docs/` (`developer-guide/session-storage.md`,
 per-platform pages for Telegram, Discord, Slack, WhatsApp, Signal and email,
 `user-guide/secrets/index.md`, `user-guide/features/provider-routing.md`,
 `user-guide/features/credential-pools.md`, `guides/local-ollama-setup.md`,
-`guides/local-llm-on-mac.md`), OpenClaw's own repository and
+`guides/local-llm-on-mac.md`, `user-guide/messaging/whatsapp-cloud.md`),
+OpenClaw's own repository and
 documentation site (`docs/providers/index.md`, `docs/providers/clawrouter.md`,
 `docs/gateway/secrets.md`, `docs/reference/secretref-credential-surface.md`,
 `docs/channels/index.md`, `docs/channels/telegram.md`, `docs/channels/discord.md`,
 `docs/channels/slack.md`, `docs/channels/whatsapp.md`,
 `docs/channels/signal.md`, `docs/gateway/local-models.md`,
-`docs/gateway/local-model-services.md`, and the `extensions/ollama/`,
+`docs/gateway/local-model-services.md`, `docs/gateway/security/index.md`,
+`docs/gateway/security/exposure-runbook.md`, `docs/install/docker.md`,
+`docker-compose.yml`, and the `extensions/ollama/`,
 `extensions/lmstudio/`, `extensions/vllm/`, and `extensions/clawrouter/`
 plugin manifests (`openclaw.plugin.json`) and `extensions/ollama/src/`
 discovery source), the project's own GitHub issue tracker for real,
@@ -37,10 +40,12 @@ Advisory Database API (`api.github.com/advisories`), the PyPI registry API
 and the npm registry API for package metadata, and
 `docs/adr/0002-resource-budget-and-feasibility-verdict.md`,
 `docs/adr/0009-secrets-sops-age.md`,
+`docs/adr/0011-cloudflare-tunnel-traefik-acme-tailscale.md`,
 `docs/adr/0014-hostpath-local-pv-no-csi.md`, and
 `docs/adr/0018-ntfy-receiver-healthchecks-witness.md` as the resource-budget,
-secrets-mechanism, storage-abstraction, and messaging-cost precedents this
-file checks both candidates against; OpenClaw's own `VISION.md`; and this
+secrets-mechanism, exposure-posture, storage-abstraction, and messaging-cost
+precedents this file checks both candidates against; OpenClaw's own
+`VISION.md`; and this
 repository's own `CONTEXT.md` and `docs/agents/*.md` for what use case, if
 any, this platform's own tracker and working conventions already establish
 (section 4). Every claim carries its URL inline. Figures pulled via API are
@@ -1617,8 +1622,208 @@ left unresolved.
 
 ---
 
-Sections 1 through 5 cover #196 (165-01, Hermes), #197 (165-02, OpenClaw),
+## 6. Exposure and messaging platform access (#165 story 6)
+
+This section covers #165's story 6 directly: an agent that receives messages
+from Telegram/Discord/WhatsApp needs outbound internet access regardless, but
+its own admin/control surface, if any, should stay private over Tailscale by
+default, per ADR-0011. ADR-0011's own standing rule is explicit about the
+default this section checks both candidates against: "Any future, not-yet-known
+service defaults to **private** until a ticket argues it out. The cheaper
+failure mode is a family member opening Tailscale, not private data facing the
+internet by default"
+(`docs/adr/0011-cloudflare-tunnel-traefik-acme-tailscale.md`, "Exposure
+posture"). Two separate questions follow from that: whether *receiving*
+messages needs an inbound listener at all (6.1), and what each candidate's own
+dashboard/API surface needs to stay private (6.2).
+
+### 6.1 Messaging connectivity: outbound-only by default, on every platform, for both candidates
+
+| Platform | Hermes default | Hermes opt-in inbound alternative | OpenClaw default | OpenClaw opt-in inbound alternative |
+| --- | --- | --- | --- | --- |
+| Telegram | Long polling: "the gateway makes outbound requests to Telegram's servers to fetch new updates" | `TELEGRAM_WEBHOOK_URL` set: Telegram pushes to a public HTTPS URL, local listener default `127.0.0.1:8443` | Long polling ("Default is long polling") | `channels.telegram.webhookUrl` set: local listener default `127.0.0.1:8787`, needs a reverse proxy or `webhookHost: "0.0.0.0"` for public ingress |
+| Discord | Gateway WebSocket, outbound-only; "not a webhook that replies statelessly" | none documented | Gateway WebSocket, outbound-only | none documented |
+| Slack | Socket Mode (`SLACK_APP_TOKEN`): "WebSocket — no public URL required" | none documented for Hermes | Socket Mode (default): "Public Gateway URL: Not required" | HTTP Request URLs mode: "Use HTTP mode when the Gateway has a public HTTPS endpoint" |
+| WhatsApp | Baileys bridge, QR-linked device session, "no public URL needed" | WhatsApp Business Cloud API (separate guide): "needs a public HTTPS URL so Meta can deliver inbound [messages]" | WhatsApp Web via Baileys, QR-linked ("Login is QR-only") | none documented (no Cloud API path in the official channel catalog) |
+| Signal | External `signal-cli` daemon, HTTP mode on `127.0.0.1:8080`, SSE stream in / JSON-RPC out | none, `signal-cli` itself is the only bridge either project supports | External `signal-cli` daemon (native or containerized), same JSON-RPC/SSE shape | none |
+
+Sources: Hermes's `user-guide/messaging/telegram.md`, `discord.md`, `slack.md`,
+`whatsapp.md`, `whatsapp-cloud.md`, `signal.md`
+(<https://raw.githubusercontent.com/NousResearch/hermes-agent/main/website/docs/user-guide/messaging/>,
+per-file paths as named); OpenClaw's `docs/channels/telegram.md`,
+`discord.md`, `slack.md`, `whatsapp.md`, `signal.md`
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/docs/channels/>,
+per-file paths as named).
+
+Every cell in the "default" columns needs only outbound connectivity from the
+gateway process; #165's own framing of this axis ("needs outbound internet
+access regardless") holds for both candidates on every one of the five named
+platforms, without exception, and without any candidate-specific caveat this
+check found. Nothing in either project's default configuration asks this
+platform's Immich-style "private-only" posture to change for messaging alone:
+outbound egress is not a public-exposure question ADR-0011 governs at all,
+matching Omniroute's own outbound-only shape
+(`research-omniroute-ai-gateway.md`). The one platform-shaped asymmetry is
+Hermes's separate WhatsApp Business Cloud API guide, a documented alternative
+to the default Baileys bridge that does need a public webhook URL; OpenClaw's
+official channel catalog names only the Baileys-style QR-linked path for
+WhatsApp, no Cloud API equivalent (`docs/channels/index.md`'s "official
+plugin" listing). Every opt-in inbound alternative found (Telegram and Slack's
+webhook modes on both candidates, Hermes's WhatsApp Cloud API) is exactly
+that: opt-in, requiring an operator to set a URL/host variable that carries no
+default resolving to a public address. Whichever ticket eventually deploys
+either candidate should carry forward a concrete constraint from this finding:
+never set `TELEGRAM_WEBHOOK_URL` / `channels.telegram.webhookUrl`, switch
+Slack to HTTP Request URLs mode, or configure Hermes's WhatsApp Cloud API on
+this platform without separately deciding to route that specific inbound path
+through the public Cloudflare Tunnel (ADR-0011), the same "never without
+reopening X first" shape section 5.3 already applied to local-inference
+config.
+
+### 6.2 Each candidate's own admin/control surface
+
+**Hermes** ships two separate optional HTTP surfaces, both off unless
+explicitly enabled. Only the API server's own application default is
+loopback; the dashboard's own application default is not, and reaches
+loopback only because the shipped `docker-compose.yml` overrides it
+explicitly, detailed below:
+
+- **Dashboard** (`HERMES_DASHBOARD=1`, default port `9119`). The
+  `HERMES_DASHBOARD_HOST` variable itself defaults to `0.0.0.0`, but the
+  repository's own shipped `docker-compose.yml` overrides that default
+  explicitly: `command: ["dashboard", "--host", "127.0.0.1", "--no-open"]`,
+  with an inline comment, "Localhost-only. For remote access, tunnel via `ssh
+  -L 9119:localhost:9119`"
+  (<https://raw.githubusercontent.com/NousResearch/hermes-agent/main/docker-compose.yml>).
+  Auth is mandatory the moment the bind is non-loopback: "the dashboard's auth
+  gate engages automatically when... the bind host is non-loopback... and a
+  `DashboardAuthProvider` plugin is registered," and it "fails closed at
+  startup" with no provider configured on a non-loopback bind
+  (`website/docs/user-guide/docker.md`, "Running the dashboard"). The
+  project's own docs cite a concrete consequence for skipping this: "An
+  unauthenticated public dashboard was the entry point for the June 2026
+  MCP-config persistence campaign: internet scanners reached exposed
+  dashboards (and OpenAI API servers) and drove the agent into planting an SSH
+  key backdoor," which is why the former `HERMES_DASHBOARD_INSECURE` bypass is
+  now "a deprecated no-op" (same source). This is the project's own account,
+  not independently corroborated by this check beyond that documentation page,
+  but it is a real, named incident, not a hypothetical one, and it lines up
+  with the "not disqualifying on its own, but real" advisory pattern section
+  1.3 already found for Hermes.
+- **OpenAI-compatible API server** (`API_SERVER_ENABLED=true`, default port
+  `8642`). Gated off by default; "to expose it beyond `127.0.0.1`... also set
+  `API_SERVER_HOST=0.0.0.0` and an `API_SERVER_KEY`," with the compose file's
+  own comment: "Opening any port on an internet facing machine is a security
+  risk. You should not do it unless you understand the risks"
+  (`website/docs/user-guide/docker.md`, "Where the API server").
+
+Both services run under `network_mode: host` in the shipped compose file, a
+choice the docs justify on a Docker mechanics ground unrelated to exposure
+policy: the dashboard's gateway-liveness detection "requires a shared PID
+namespace with the gateway process," which `network_mode: host` provides
+alongside the shared network namespace (`user-guide/docker.md`, "Running the
+dashboard"). The bind defaults (loopback for both surfaces once enabled) are
+what actually governs reachability here, not the namespace choice.
+
+**OpenClaw** multiplexes everything onto one Gateway port (default `18789`):
+WebSocket, HTTP API (`/v1/*`, `/tools/invoke`, `/api/channels/*`), the Control
+UI single-page app, and hosted widget/canvas assets
+(`docs/gateway/security/index.md`, "Bind, port, firewall"). `gateway.bind`'s
+documented default is `"loopback"`: "only local clients can connect"; `"lan"`,
+`"tailnet"`, and `"custom"` "expand the attack surface" and need auth plus a
+real firewall (same source). Gateway auth is "required by default - with no
+valid auth path configured, the Gateway refuses WebSocket connections
+(fail-closed)," and normal onboarding "generates a token by default (even for
+loopback)" (same source, "Gateway WebSocket auth"). The documented private
+remote-access pattern is Tailscale Serve specifically, stated as the preferred
+option over widening the bind at all: "prefer Tailscale Serve over LAN binds
+(Serve keeps the Gateway on loopback and Tailscale handles access)" (same
+source, "Bind, port, firewall"), and the dedicated exposure runbook repeats
+this as its top-ranked pattern for "personal tailnet access to Control
+UI/WebSocket," ahead of any LAN or reverse-proxy option
+(`docs/gateway/security/exposure-runbook.md`, "Choose the exposure pattern").
+
+The shipped `docker-compose.yml` diverges from that documented default the
+opposite direction from Hermes's dashboard: its `openclaw-gateway` service
+runs `"--bind", "${OPENCLAW_GATEWAY_BIND:-lan}"` and publishes
+`"${OPENCLAW_GATEWAY_PORT:-18789}:18789"` with no host IP named, which Compose
+resolves to every host interface, not `127.0.0.1` only
+(<https://raw.githubusercontent.com/openclaw/openclaw/main/docker-compose.yml>).
+The install guide gives the same Docker-mechanics reason Hermes's
+`network_mode: host` choice had: "`scripts/docker/setup.sh` defaults
+`OPENCLAW_GATEWAY_BIND=lan` so `http://127.0.0.1:18789` on the host works with
+Docker port publishing." A loopback bind *inside* the container's own network
+namespace would be unreachable through a published port at all, unrelated to
+whether the operator wants LAN-wide access
+(`docs/install/docker.md`, line 337 context). The standard onboarding path
+covers the auth side of that gap: `scripts/docker/setup.sh` "generates a
+gateway token and writes it to `.env`" before the container ever starts
+serving traffic (same source, "Complete onboarding"), matching the
+fail-closed behavior `security/index.md` documents. What this check did not
+resolve: `docker-compose.yml`'s own `OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}`
+falls back to an empty string, not an unset variable, if an operator runs bare
+`docker compose up` without the setup script; whether an empty-string token is
+treated as "no valid auth path configured" (fail-closed, per `security/index.md`)
+or as a configured-but-blank credential is not settled by any page this check
+read. Recorded as an open question for whichever ticket writes the actual
+deployment manifest, not a finding this section can close from documentation
+alone, the same "not chased down" posture section 1.3 used for Hermes's
+provenance coverage gap.
+
+### 6.3 Verdict against ADR-0011
+
+Both candidates' admin/control surfaces fit ADR-0011's default-private posture
+without reopening it. OpenClaw's own documentation independently arrives at
+the same mechanism this platform already standardized on: Tailscale Serve,
+named as its preferred pattern ahead of LAN binds or reverse proxies (6.2).
+Hermes's dashboard needs nothing more exotic than the SSH-tunnel or
+Tailscale-forwarded access its own docs already suggest, over the same
+loopback bind its shipped compose file already ships. Read against this
+platform's own deployment shape specifically: what actually governs
+reachability here is whether a Kubernetes `Service`/`Ingress` publishes a
+workload's port, not the application's own bind default inside its container's
+network namespace, the identical principle ADR-0011 already applies to every
+other workload on this platform (Immich private-only over Tailscale by
+default, the two showcase stacks public only because a ticket argued it, "any
+future, not-yet-known service defaults to private"). Neither candidate's
+documentation argues for public exposure of its admin surface; both would
+deploy the same way Immich already does, a `ClusterIP` Service reached only
+over Tailscale, no new ticket needed to decide that part, and OpenClaw's own
+`docker-compose.yml` LAN-bind default is a Docker-specific artifact of running
+outside Kubernetes, not evidence against that fit.
+
+One asymmetry worth carrying forward rather than treating as equivalent:
+Hermes's shipped compose file is *stricter* than its own documented default
+(explicit `--host 127.0.0.1` against a `HERMES_DASHBOARD_HOST` default of
+`0.0.0.0`), where OpenClaw's shipped compose file is *wider* than its own
+documented default (`bind: lan` against a `gateway.bind` default of
+`"loopback"`), for a comparable Docker-mechanics reason on both sides. Neither
+is disqualifying, since this platform would not run either candidate's Docker
+Compose file as shipped in the first place (ADR-0008/ADR-0014's own Kustomize
+pattern replaces it), but it is a concrete difference in which direction each
+project's own artifact drifts from its own documented safe default, worth a
+line in whichever ticket writes the actual manifest rather than assuming
+either compose file's exposure posture transfers unmodified.
+
+Sender-level exposure, who can address the bot at all, is the natural
+complement to network-level exposure and is deny-by-default on both
+candidates for every platform checked, not just an available hardening step:
+Hermes's own words, "By default, the gateway denies all users who are not in
+an allowlist or paired via DM. This is the safe default for a bot with
+terminal access" (`user-guide/messaging/index.md`); OpenClaw's exposure
+runbook, "Prefer `dmPolicy: "pairing"` or a strict `allowFrom` list over
+`dmPolicy: "open"`" and "Do not combine `"*"` allowlists with broad tool
+access" (`docs/gateway/security/exposure-runbook.md`, "DM and group
+exposure"). This is not itself an ADR-0011 finding, ADR-0011 governs network
+reachability, not message-sender authorization, but it is the fact that
+answers the other half of "who can reach this agent" #165's story 6 asked
+about, and it holds as a default on both candidates rather than something a
+deployment ticket has to add.
+
+---
+
+Sections 1 through 6 cover #196 (165-01, Hermes), #197 (165-02, OpenClaw),
 #198 (165-03, provider integration and secrets for both), #199 (165-04,
-use-case analysis), and #200 (165-05, VRAM/local inference check). Exposure
-posture (#201/165-06) and the final comparison and recommendation
-(#202/165-07) are follow-on tickets against this same file.
+use-case analysis), #200 (165-05, VRAM/local inference check), and #201
+(165-06, exposure and messaging platform access). The final comparison and
+recommendation (#202/165-07) is a follow-on ticket against this same file.
