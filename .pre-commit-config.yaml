@@ -8,9 +8,14 @@
 #    working tree (entry overridden below), the backstop for values pasted
 #    somewhere the path convention doesn't cover. False positives (a
 #    documented example key, never a real secret) go in .gitleaksignore.
-# 3. shellcheck, scripts/*'s seven top-level scripts (not scripts/lib/,
-#    a sourced-only library, never invoked directly).
-# 4. ansible-lint, ansible/ only (.ansible-lint excludes the Flux-generated
+# 3. shellcheck, scripts/*'s Bash top-level scripts (not scripts/lib/, a
+#    sourced-only library, never invoked directly; not *.py, converted
+#    scripts under the same directory - see #252).
+# 4. black, isort, flake8: the same coverage for scripts/*.py as shellcheck
+#    gives the Bash scripts (#252). isort uses black's import profile and
+#    flake8 ignores the rules black intentionally violates, so the three
+#    never fight over the same line - see pyproject.toml/.flake8.
+# 5. ansible-lint, ansible/ only (.ansible-lint excludes the Flux-generated
 #    clusters/ and the mixed-provenance workloads/).
 #
 # Install once per checkout:
@@ -46,6 +51,25 @@ repos:
         # file being checked, not the CWD pre-commit/CI happens to run from.
         args: [-x, -P, SCRIPTDIR]
         files: ^scripts/[^/]+$
+        exclude: \.py$
+
+  - repo: https://github.com/psf/black-pre-commit-mirror
+    rev: 26.5.1
+    hooks:
+      - id: black
+        files: ^scripts/[^/]+\.py$
+
+  - repo: https://github.com/pycqa/isort
+    rev: 8.0.1
+    hooks:
+      - id: isort
+        files: ^scripts/[^/]+\.py$
+
+  - repo: https://github.com/pycqa/flake8
+    rev: 7.3.0
+    hooks:
+      - id: flake8
+        files: ^scripts/[^/]+\.py$
 
   - repo: https://github.com/ansible/ansible-lint
     rev: v26.8.0

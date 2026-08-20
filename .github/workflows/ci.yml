@@ -33,8 +33,9 @@ jobs:
           python-version: "3.14"
 
       # Caches the installed hook environments (ansible-core, shellcheck,
-      # gitleaks' golang toolchain) and the Galaxy collections below, the
-      # expensive part; keyed on the configs so a bump invalidates them.
+      # gitleaks' golang toolchain, black/isort/flake8) and the Galaxy
+      # collections below, the expensive part; keyed on the configs so a
+      # bump invalidates them.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |

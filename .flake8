@@ -1,0 +1,7 @@
+# flake8 has no pyproject.toml support without a plugin, hence the
+# separate file. Matches black's defaults (#252): 88-column lines, and
+# E203/W503 ignored because black's own formatting violates both
+# (whitespace before ':' in slices, line breaks before binary operators).
+[flake8]
+max-line-length = 88
+extend-ignore = E203, W503
