@@ -9,7 +9,7 @@
 
 # The role-managed admin account, reasserted on every run rather than
 # trusting what a prior run left behind. Named after the node's real
-# hostname (ADR-0015), so it converges with `scripts/build-media`'s
+# hostname (ADR-0015), so it converges with `scripts/build-media.py`'s
 # cloud-init bootstrap account instead of leaving two separate accounts on
 # the box. `real_hostname` is itself a designator with no committed value
 # (ADR-0015): it only exists in the gitignored `host_vars/<node>_secrets.yml`,

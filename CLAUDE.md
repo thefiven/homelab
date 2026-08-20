@@ -48,9 +48,14 @@ the two apart.
 
 ### Python scripts
 
-`scripts/` is Bash by default, converted to Python one script at a time,
-each conversion its own ticket opened when that script is next touched (no
-bulk rewrite). Conventions for those conversions:
+All six scripts #251 named as eligible (`check`, `check-sops-secrets`,
+`check-sops-secrets-test`, `build-media`, `flux-bootstrap`,
+`provision-state-pool`) are converted to Python. #251 itself scoped
+conversion as convert-on-touch, one ticket per script, explicitly no bulk
+rewrite - the maintainer asked, in a later session, to override that and
+convert all six in one pass instead; this is that override, not something
+#251's own text authorizes. New scripts default to Python; a Bash script
+only stays Bash if it's wizard-generated (see above). Conventions:
 
 - Standard-library-first; add a third-party dependency only when a specific
   script genuinely needs one.
