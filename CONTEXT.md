@@ -24,7 +24,7 @@ not discovered: a service enters or leaves it by an ADR.
 
 **Hardware-free check**:
 A check that runs without touching the physical node or NAS: what
-`scripts/check` runs, and the only kind of check CI is capable of running.
+`scripts/check.py` runs, and the only kind of check CI is capable of running.
 _Avoid_: test, test suite. This repository doesn't use those words for it.
 
 **Platform verify**:

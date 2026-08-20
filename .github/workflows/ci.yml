@@ -1,6 +1,6 @@
 # The repository's one required check (ADR-0016, #124). CI is a validator
 # only: it runs the same pre-commit config a contributor runs locally, plus
-# the hardware-free self-checks (scripts/check). It never deploys — Flux
+# the hardware-free self-checks (scripts/check.py). It never deploys — Flux
 # pulls from inside the network (ADR-0007, ADR-0008, ADR-0011), so no
 # cluster credential is ever a CI secret.
 name: CI
@@ -51,4 +51,4 @@ jobs:
       # ansible-lint's search list regardless of which venv runs it.
       - run: ansible-galaxy collection install -r ansible/requirements.yml
       - run: pre-commit run --all-files
-      - run: scripts/check
+      - run: scripts/check.py

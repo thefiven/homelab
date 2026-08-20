@@ -1,7 +1,7 @@
 # Pre-commit scanning (ADR-0009 and its ADR-0016 amendment): the same
 # config a local hook and CI both run, so the two can never diverge.
 #
-# 1. sops-metadata-policy, local (scripts/check-sops-secrets). Enforces this
+# 1. sops-metadata-policy, local (scripts/check-sops-secrets.py). Enforces this
 #    repo's own path convention (secrets/.*\.ya?ml$, from .sops.yaml): any
 #    such file must be SOPS-encrypted.
 # 2. gitleaks, pattern-matches likely secret material anywhere in the
@@ -25,7 +25,7 @@ repos:
     hooks:
       - id: sops-metadata-policy
         name: SOPS metadata policy (secrets/ must be encrypted)
-        entry: scripts/check-sops-secrets
+        entry: scripts/check-sops-secrets.py
         language: script
         # Unanchored, matching .sops.yaml's own path_regex exactly: SOPS
         # matches that regex unanchored too, so a nested path like

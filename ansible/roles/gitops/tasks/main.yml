@@ -17,7 +17,7 @@
   block:
     # Read-only, no_log-free: this task's own output stays visible on
     # failure, unlike the secret task below it. Gates that task, not the
-    # `--tags verify` checks further down — `scripts/flux-bootstrap`
+    # `--tags verify` checks further down — `scripts/flux-bootstrap.py`
     # remains a separate, manual gesture (#115's own decision), so a fresh
     # node's first-ever `ansible-playbook site.yml` run (ADR-0013 gesture
     # 7) reaches this role before Flux exists. A missing namespace there

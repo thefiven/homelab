@@ -33,13 +33,16 @@
 # #116 extracted the designation/import/create logic (formerly fifteen
 # tasks resolving the disk, importing, classifying failures, force-
 # importing on a hostid mismatch, creating, and verifying the backing
-# device) into scripts/provision-state-pool, so that logic can be exercised
-# by `--self-check` without an NVMe carrying, or not carrying, a matching
-# pool. Behaviour is unchanged; only where it lives moved.
+# device) into scripts/provision-state-pool.py, so that logic can be
+# exercised by `--self-check` without an NVMe carrying, or not carrying, a
+# matching pool. Behaviour is unchanged; only where it lives moved.
+# Converted to Python (#251): relies on Ansible's default Python
+# auto-discovery already in effect on this host for every other module in
+# this play, no ansible_python_interpreter override needed.
 - name: Copy the state-pool provisioning script to the node
   ansible.builtin.copy:
-    src: "{{ playbook_dir }}/../scripts/provision-state-pool"
-    dest: /usr/local/sbin/provision-state-pool
+    src: "{{ playbook_dir }}/../scripts/provision-state-pool.py"
+    dest: /usr/local/sbin/provision-state-pool.py
     owner: root
     group: root
     mode: "0750"
@@ -53,7 +56,7 @@
 - name: Provision the state pool (import existing, create on a bare disk, verify the backing device)
   ansible.builtin.command:
     cmd: >-
-      /usr/local/sbin/provision-state-pool
+      /usr/local/sbin/provision-state-pool.py
       --serial {{ zfs_state_disk_serial | quote }}
       --pool {{ zfs_state_pool | quote }}
       {% for key, value in zfs_state_pool_root_properties.items() %}
