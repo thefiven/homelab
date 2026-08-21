@@ -69,7 +69,8 @@ See [ADR-0002](./docs/adr/0002-resource-budget-and-feasibility-verdict.md).
 
 **Envelope**:
 The share of a finite machine resource allocated to one consumer by the resource
-budget — of memory, or of daily writes. It is a decision, not an observation.
+budget — of memory, of daily writes, or of stored capacity. It is a decision, not
+an observation.
 _Avoid_: Quota, allowance
 
 **Reservation**:
@@ -91,8 +92,15 @@ The unit envelope an ordinary workload receives without arguing for one — an
 application plus its database. Platform capacity is stated in slots.
 
 **Reserved floor**:
-The part of the machine consumed before any workload sees it: host, filesystem
-cache, control plane, GitOps engine, observability.
+The part of the machine consumed before any workload sees it. Its two halves are
+not interchangeable, and
+[ADR-0020](./docs/adr/0020-revised-allocation-after-measurement.md) separates
+them for that reason: one half is invisible to the admission gate (host,
+filesystem cache, the control plane's own process) and has to be subtracted from
+the machine before the gate counts anything; the other declares itself as an
+ordinary reservation and the gate sees it for free (GitOps engine, observability,
+platform services). Stating the floor as one number is what lets the first half
+be handed out twice.
 
 **Slack**:
 Machine resource deliberately left unallocated at the platform level. It is not
