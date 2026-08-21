@@ -60,6 +60,12 @@ it runs, not committed to a doc that immediately goes stale.
      the Cloudflare dashboard, not a value any role's `--tags verify` task
      can read. Proven by hand instead: `scripts/ingress-smoke-setup`'s own
      Stage 3.
+10. **Tailnet kubeconfig TLS validates.** The k3s apiserver's serving
+    certificate carries node1's Tailscale IPv4 in its SAN list (`--tls-san`,
+    read live from `tailscale ip -4`, ADR-0019/#244, #247), proven by an
+    actual TLS handshake against `https://<tailscale-ip>:6443` that
+    validates against the cluster CA, not just an offline read of the
+    certificate's SAN list. `k3s` role, `--tags verify`.
 
 ## Known gap: three components outside GitOps
 
