@@ -34,6 +34,32 @@
 - name: Configure this node as a k3s server
   when: k3s_role == 'server'
   block:
+    # #247, ADR-0019's admin-workstation kubeconfig: a kubeconfig pointed at
+    # this node's tailnet address must validate TLS with no
+    # --insecure-skip-tls-verify, which means the apiserver's serving
+    # certificate needs that address in its SAN list (k3s's --tls-san
+    # flag). Read live, not hardcoded, so the SAN tracks the tailnet address
+    # if it ever changes, same reasoning as the join-token read in agent
+    # mode below never caching what it fetches. `tailscale` runs before
+    # `k3s` in site.yml, so the node is already enrolled by the time this
+    # runs. Tagged `always`: the verify task further down needs this same
+    # fact on a `--tags verify`-only run, where this block's own install
+    # task is skipped.
+    - name: Read this node's Tailscale IPv4 address
+      ansible.builtin.command:
+        cmd: tailscale ip -4
+      register: k3s_tailscale_ip
+      changed_when: false
+      check_mode: false
+      tags: always
+
+    # --tls-san is appended here rather than folded into k3s_server_exec_args
+    # itself: that default is a plain string meant for operator-overridden
+    # flags (defaults/main.yml), not a template, and the tailnet address is
+    # never known until this runs. The install script hashes the rendered
+    # systemd unit before and after running (this role's header note), so
+    # a second run with the same resolved address still reports "No change
+    # detected" below.
     - name: Install k3s in server mode
       ansible.builtin.shell:
         executable: /bin/bash
@@ -42,7 +68,7 @@
           curl -sfL https://get.k3s.io | sh -
       environment:
         INSTALL_K3S_CHANNEL: "{{ k3s_channel }}"
-        INSTALL_K3S_EXEC: "{{ k3s_server_exec_args }}"
+        INSTALL_K3S_EXEC: "{{ k3s_server_exec_args }} --tls-san={{ k3s_tailscale_ip.stdout }}"
       register: k3s_server_install
       changed_when: "'No change detected' not in k3s_server_install.stdout"
 
@@ -245,6 +271,32 @@
     fail_msg: >-
       Not every k3s node is Ready: {{ k3s_node_ready.stdout }}
     quiet: true
+  when: k3s_role == 'server'
+  tags: verify
+
+# `--tags verify`: proves #247's own acceptance criterion directly, a real
+# TLS handshake against the tailnet address, not just an offline read of the
+# certificate's SAN list, so this also catches the apiserver still serving a
+# stale certificate after a SAN change. `-verify_return_error` (OpenSSL
+# 1.1.0+, confirmed against node1's 3.5.5) is what makes s_client itself
+# fail closed on a verification error; without it, s_client prints "Verify
+# return code" but still exits 0, which would make this task's rc always 0
+# regardless of whether validation actually passed. `-CAfile
+# server-ca.crt`, not the system trust store: that's the CA k3s's own
+# install script signs the apiserver's serving certificate from (confirmed
+# against node1's tls/ directory), the same file the client half of #246
+# points its kubeconfig's certificate-authority-data at.
+- name: Perform a TLS handshake against the apiserver over Tailscale
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -o pipefail
+      openssl s_client \
+        -connect {{ k3s_tailscale_ip.stdout }}:{{ k3s_server_port }} \
+        -CAfile /var/lib/rancher/k3s/server/tls/server-ca.crt \
+        -verify_return_error < /dev/null
+  changed_when: false
+  check_mode: false
   when: k3s_role == 'server'
   tags: verify
 
