@@ -274,6 +274,51 @@
   when: k3s_role == 'server'
   tags: verify
 
+# `--tags verify`: proves #261's own acceptance criterion, that the
+# admission gate ADR-0002 rests its verdict on is actually wired rather than
+# node-allocatable silently equalling capacity (this ticket's own starting
+# state, measured on node1 the day it was filed). Memory always renders
+# with a `Ki` suffix in kubectl's jsonpath output (confirmed against
+# node1's own node object), so the regex just strips that rather than
+# parsing a Quantity properly the way a real Kubernetes client library
+# would.
+- name: Read this node's capacity and allocatable memory
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - node
+      - "{{ ansible_facts.hostname }}"
+      - -o
+      - jsonpath={.status.capacity.memory}{"\n"}{.status.allocatable.memory}
+  register: k3s_node_memory
+  changed_when: false
+  check_mode: false
+  when: k3s_role == 'server'
+  tags: verify
+
+# 8376320 Ki is ADR-0020's 7.5 GiB system-reserved floor (7.5 * 1024 * 1024)
+# plus the 500Mi eviction-hard threshold (500 * 1024) above: kubelet's
+# allocatable formula subtracts both from capacity, not system-reserved
+# alone (confirmed against node1 — allocatable dropped by exactly
+# system-reserved + eviction-hard once this role's own flags were applied,
+# not by system-reserved on its own).
+- name: Assert node-allocatable memory reserves ADR-0020's 7.5Gi floor
+  ansible.builtin.assert:
+    that: >-
+      (k3s_node_memory.stdout_lines[0] | regex_replace('Ki$', '') | int)
+      - (k3s_node_memory.stdout_lines[1] | regex_replace('Ki$', '') | int)
+      == 8376320
+    fail_msg: >-
+      node-allocatable memory does not reserve ADR-0020's 7.5Gi
+      system-reserved floor plus its 500Mi eviction-hard threshold
+      (capacity/allocatable: {{ k3s_node_memory.stdout_lines }}). Check
+      --kubelet-arg=system-reserved on the k3s server unit.
+    quiet: true
+  when: k3s_role == 'server'
+  tags: verify
+
 # `--tags verify`: proves #247's own acceptance criterion directly, a real
 # TLS handshake against the tailnet address, not just an offline read of the
 # certificate's SAN list, so this also catches the apiserver still serving a
