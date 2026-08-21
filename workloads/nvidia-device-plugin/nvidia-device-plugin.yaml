@@ -12,8 +12,12 @@
 # source object for nothing a plain manifest doesn't already do.
 #
 # Source: https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.19.3/deployments/static/nvidia-device-plugin.yml
-# unchanged below the original Apache-2.0 header, with this repo's own
-# context prepended above it.
+# below the original Apache-2.0 header, with this repo's own context
+# prepended above it. No longer byte-for-byte: #258 added the ConfigMap
+# below and three lines on the DaemonSet's container (env, volume,
+# volumeMount) to turn on time-slicing (see that ConfigMap's own comment
+# for why). Re-vendoring a newer upstream tag means re-applying those
+# three lines by hand.
 #
 # Copyright (c) 2019, NVIDIA CORPORATION.  All rights reserved.
 #
@@ -29,6 +33,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Turns on time-slicing (#258): this node exposes exactly one physical GPU,
+# so without this the node only ever advertises one nvidia.com/gpu unit,
+# and whichever pod claims it first (in practice, immich-machine-learning,
+# which never stops running) starves out every other pod that requests the
+# resource, including the `nvidia` role's own verify-GPU check
+# (ansible/roles/nvidia/tasks/main.yml) — `FailedScheduling: Insufficient
+# nvidia.com/gpu`, not a flake. `replicas: 2` is enough to let one
+# always-on consumer and one transient probe coexist; it is not a general
+# multi-tenant GPU allocation and buys no memory isolation between
+# whatever pods land on those two slots (upstream docs, same tag:
+# https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.19.3/README.md).
+# Mounted straight into the existing container below, no config-manager
+# init/sidecar containers: those exist for switching between multiple
+# named configs across many nodes via a node label, which this
+# single-node platform has no use for.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nvidia-device-plugin-config
+  namespace: kube-system
+data:
+  config.yaml: |
+    version: v1
+    sharing:
+      timeSlicing:
+        resources:
+        - name: nvidia.com/gpu
+          replicas: 2
+---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -57,7 +90,9 @@ spec:
       containers:
       - image: nvcr.io/nvidia/k8s-device-plugin:v0.19.3
         name: nvidia-device-plugin-ctr
-        env: []
+        env:
+        - name: CONFIG_FILE
+          value: /etc/nvidia/config/config.yaml
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -65,8 +100,13 @@ spec:
         volumeMounts:
         - name: kubelet-device-plugins-dir
           mountPath: /var/lib/kubelet/device-plugins
+        - name: nvidia-device-plugin-config
+          mountPath: /etc/nvidia/config
       volumes:
       - name: kubelet-device-plugins-dir
         hostPath:
           path: /var/lib/kubelet/device-plugins
           type: Directory
+      - name: nvidia-device-plugin-config
+        configMap:
+          name: nvidia-device-plugin-config
