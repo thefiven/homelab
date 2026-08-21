@@ -288,6 +288,15 @@ with it. Recorded now so the review is a reading rather than a fresh argument.
   30.26 GiB to 22.76 GiB the day it is set. That is the point, and it is also how a deployment
   gets blocked at an inconvenient moment. Current requests are 15.46 GiB, so nothing running today
   is affected.
+  - **Amendment, 2026-08-21 (#261): 22.76 GiB undercounts by another 500 MiB.** k3s's kubelet
+    subtracts `eviction-hard`'s threshold from allocatable in addition to `system-reserved`, not
+    `system-reserved` alone. Confirmed against node1 once #261 wired both flags: allocatable
+    reports 23360212 Ki, about 22.28 GiB, not the 22.76 GiB this table derives from
+    `system-reserved` on its own. Workload space and the workloads table below are not re-derived
+    here, the same reasoning this ADR's own "Amending ADR-0002 in place" (Alternatives rejected)
+    gives for leaving a drifted number as a dated note rather than a silent table edit; closing
+    the resulting 500 MiB gap is left to
+    whichever of #262-#274 lands next.
 - **Traefik and svclb need caps.** They ship from k3s's bundled add-ons, outside GitOps, and
   currently run `BestEffort`. Until they carry requests and limits, ADR-0002's first condition is
   false for them specifically.
