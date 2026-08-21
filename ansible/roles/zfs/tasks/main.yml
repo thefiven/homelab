@@ -1,4 +1,5 @@
-# Role `zfs`: create ADR-0010's state pool, cap the ARC, and schedule trim.
+# Role `zfs`: create ADR-0010's state pool, cap the ARC and dirty data, and
+# schedule trim.
 #
 # This is the most dangerous role in the playbook — the only one that writes
 # to a partition table. Every task below is written so that a second run, or
@@ -65,17 +66,23 @@
   register: zfs_provision_result
   changed_when: "'No change detected' not in zfs_provision_result.stdout"
 
-# Why 5 GiB and not the OpenZFS default: defaults/main.yml.
+# Why 4 GiB / 1 GiB and not the OpenZFS defaults: defaults/main.yml.
 - name: Read the ARC cap currently in force
   ansible.builtin.slurp:
     src: /sys/module/zfs/parameters/zfs_arc_max
   register: zfs_arc_max_running
   check_mode: false
 
-# The cap applies live: the module accepts this parameter as a write, and
-# the ARC shrinks to it on its own. Without this task the value would only
-# take effect on the next reboot — exactly the install window where memory
-# is tightest.
+- name: Read the dirty-data cap currently in force
+  ansible.builtin.slurp:
+    src: /sys/module/zfs/parameters/zfs_dirty_data_max
+  register: zfs_dirty_data_max_running
+  check_mode: false
+
+# Both caps apply live: the module accepts each parameter as a write, and
+# ARC/dirty data shrink to it on their own. Without these tasks the values
+# would only take effect on the next reboot — exactly the install window
+# where memory is tightest.
 - name: Apply the ARC cap without waiting for a reboot
   ansible.builtin.shell:
     executable: /bin/sh
@@ -83,12 +90,22 @@
   when: zfs_arc_max_running.content | b64decode | trim | int != zfs_arc_max_bytes
   changed_when: true
 
-- name: Persist the ARC cap across reboots
+- name: Apply the dirty-data cap without waiting for a reboot
+  ansible.builtin.shell:
+    executable: /bin/sh
+    cmd: >-
+      echo {{ zfs_dirty_data_max_bytes }} >
+      /sys/module/zfs/parameters/zfs_dirty_data_max
+  when: zfs_dirty_data_max_running.content | b64decode | trim | int != zfs_dirty_data_max_bytes
+  changed_when: true
+
+- name: Persist the ARC and dirty-data caps across reboots
   ansible.builtin.copy:
     dest: /etc/modprobe.d/zfs.conf
     content: |
       # Managed by Ansible, role `zfs`. Manual edits are overwritten.
       options zfs zfs_arc_max={{ zfs_arc_max_bytes }}
+      options zfs zfs_dirty_data_max={{ zfs_dirty_data_max_bytes }}
     owner: root
     group: root
     mode: "0644"
@@ -126,12 +143,44 @@
     enabled: true
     state: started
 
-# `--tags verify`: proves the "ZFS pools ONLINE" invariant
-# (docs/reference/platform-state.md) with the same tool this role already
-# trusts to read pool state, not the bash-over-SSH duplicate in the
-# deleted scripts/check-platform (#115). Read-only, so it doesn't depend
-# on the import/create logic above and can run against a pool this role
-# never had to create or import this pass.
+# `--tags verify`: proves the ARC/dirty-data split (#262) holds, since
+# --tags verify skips the untagged read/apply tasks above and neither
+# parameter had any check before this. Read directly rather than reusing
+# zfs_arc_max_running/zfs_dirty_data_max_running: those registers don't
+# exist when the play is run with --tags verify alone.
+- name: Read the ARC cap for verification
+  ansible.builtin.slurp:
+    src: /sys/module/zfs/parameters/zfs_arc_max
+  register: zfs_arc_max_verify
+  check_mode: false
+  tags: verify
+
+- name: Read the dirty-data cap for verification
+  ansible.builtin.slurp:
+    src: /sys/module/zfs/parameters/zfs_dirty_data_max
+  register: zfs_dirty_data_max_verify
+  check_mode: false
+  tags: verify
+
+- name: Assert the ARC and dirty-data caps match the configured budget
+  ansible.builtin.assert:
+    that:
+      - zfs_arc_max_verify.content | b64decode | trim | int == zfs_arc_max_bytes
+      - zfs_dirty_data_max_verify.content | b64decode | trim | int == zfs_dirty_data_max_bytes
+    fail_msg: >-
+      ZFS ARC/dirty-data cap has drifted from the configured budget:
+      zfs_arc_max={{ zfs_arc_max_verify.content | b64decode | trim }}
+      (want {{ zfs_arc_max_bytes }}),
+      zfs_dirty_data_max={{ zfs_dirty_data_max_verify.content | b64decode | trim }}
+      (want {{ zfs_dirty_data_max_bytes }})
+    quiet: true
+  tags: verify
+
+# Proves the "ZFS pools ONLINE" invariant (docs/reference/platform-state.md)
+# with the same tool this role already trusts to read pool state, not the
+# bash-over-SSH duplicate in the deleted scripts/check-platform (#115).
+# Read-only, so it doesn't depend on the import/create logic above and can
+# run against a pool this role never had to create or import this pass.
 - name: Read ZFS pool health
   ansible.builtin.command:
     cmd: zpool list -H -o name,health

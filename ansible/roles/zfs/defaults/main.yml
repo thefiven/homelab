@@ -16,11 +16,24 @@ zfs_state_pool: state
 # failure, since a wrong guess would `zpool create` over the wrong disk.
 # Set in inventory or host_vars before running against a real host.
 
-# #18's resource budget pins the ZFS ARC at 5 GiB, well under the OpenZFS
-# >=2.3.0 default (31 GiB on this 32 GiB machine) that would otherwise starve
-# every other workload. This is a systemwide module parameter, not a
-# per-pool one — it governs the system pool's ARC usage too.
-zfs_arc_max_bytes: 5368709120
+# #18's resource budget pinned the whole 5 GiB filesystem-cache envelope to
+# the ARC. #262 splits it the way ADR-0002 actually decided: 4 GiB of ARC
+# plus zfs_dirty_data_max_bytes below for the other 1 GiB, against the
+# OpenZFS >=2.3.0 default (31 GiB on this 32 GiB machine) that would
+# otherwise starve every other workload. ADR-0002's original reason for 4
+# GiB (no ARC could usefully cache a 150-300 GB hot set) is now false — the
+# real derivative set is 14 GB — but ADR-0020 keeps the same number on the
+# argument that still holds: write endurance, not read latency, is the
+# scarce resource on these drives. This is a systemwide module parameter,
+# not a per-pool one — it governs the system pool's ARC usage too.
+zfs_arc_max_bytes: 4294967296
+
+# The other half of ADR-0002's envelope (#262): capped instead of left at
+# the OpenZFS default (~3.2 GiB, `zfs_dirty_data_max` is derived from
+# physical memory) that ADR-0002 argued against. Applied the same way as
+# zfs_arc_max_bytes above — live sysfs write plus modprobe.d persistence —
+# since it's the same class of systemwide module parameter.
+zfs_dirty_data_max_bytes: 1073741824
 
 # Root-of-pool properties, applied at `zpool create` time with `-O`.
 # `atime=on`/`relatime=on` is ADR-0010's "relatime=on elsewhere" baseline;
