@@ -1,0 +1,21 @@
+# Defaults for the `admin-kubeconfig` role (ADR-0019, #244/#246/#249).
+#
+# What the ServiceAccount/namespace/token-Secret are named is
+# admin-access's own defaults (admin_access_namespace,
+# admin_access_service_account, admin_access_token_secret), read directly
+# from there rather than duplicated here: that role's own defaults/main.yml
+# already says its token Secret name is read again by this role.
+
+# Where the assembled kubeconfig lands on the control node.
+# lookup('env', 'HOME'), not a literal ~: this file is written by a
+# delegate_to: localhost task, and Ansible does not shell-expand ~ inside a
+# Jinja string, same reasoning gitops_sops_age_key_file already uses
+# (ansible/roles/gitops/defaults/main.yml).
+admin_kubeconfig_path: "{{ lookup('env', 'HOME') }}/.kube/config"
+
+# Cluster/context name inside the kubeconfig. Distinct from
+# admin_access_service_account (the in-cluster ServiceAccount's name, also
+# reused below as the kubeconfig user name): these two happen to differ in
+# purpose even where the value would coincide.
+admin_kubeconfig_cluster_name: homelab
+admin_kubeconfig_context_name: admin-access

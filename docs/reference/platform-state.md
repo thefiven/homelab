@@ -68,8 +68,11 @@ it runs, not committed to a doc that immediately goes stale.
     certificate's SAN list. `k3s` role, `--tags verify`.
 11. **admin-access RBAC objects present.** The `admin-access` ServiceAccount,
     ClusterRole, and ClusterRoleBinding (ADR-0019/#244, #246/#248) all exist
-    on the cluster: the credential #249's kubeconfig authenticates as.
-    `admin-access` role, `--tags verify`.
+    on the cluster: the credential the delivered kubeconfig (below)
+    authenticates as. `admin-access` role, `--tags verify`.
+12. **Scoped kubeconfig delivered to the control node.** `~/.kube/config`
+    exists on the control node, mode `0600` (ADR-0019/#244, #246/#249).
+    `admin-kubeconfig` role, `--tags verify`.
 
 ## Known gap: three components outside GitOps
 

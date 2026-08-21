@@ -1,0 +1,111 @@
+---
+# Role `admin-kubeconfig`: assembles the scoped kubeconfig ADR-0019 asked
+# for and delivers it to the control node (#244, #246, this ticket #249).
+# Reads the admin-access ServiceAccount's token (#248) and node1's cluster
+# CA, points server: at node1's Tailscale address (#247's SAN), and writes
+# the result to ~/.kube/config on the control node, delegate_to: localhost,
+# become: false, no_log: true on the token-bearing tasks, the same shape
+# the `gitops` role already uses to read the daily age identity, never
+# landing the token in a file on node1 itself. Deliberately kept separate
+# from `admin-access` (that role's own header comment): this role assembles
+# and delivers, admin-access mints the cluster-side RBAC alone.
+#
+# Same `k3s_role == 'server'` gate `gitops`/`admin-access` use, same
+# reasoning: this role runs after both in site.yml, so `k3s`'s own assert
+# (tagged always) has already failed loudly for any host with k3s_role
+# unset by the time this block runs.
+- name: Assemble and deliver the admin workstation's scoped kubeconfig
+  when: k3s_role == 'server'
+  block:
+    # Public data, no no_log needed. Read straight off node1 (no delegate):
+    # the same file the k3s role's own verify task already TLS-handshakes
+    # against (ansible/roles/k3s/tasks/main.yml), confirmed there as the CA
+    # k3s's install script signs the apiserver's serving certificate from.
+    # slurp base64-encodes what it reads, which is exactly the encoding
+    # certificate-authority-data expects, see the template's own comment.
+    - name: Read node1's cluster CA certificate
+      ansible.builtin.slurp:
+        src: /var/lib/rancher/k3s/server/tls/server-ca.crt
+      register: admin_kubeconfig_ca_raw
+
+    # `until`/`retries`: on a fresh apply this task can run moments after
+    # admin-access's own task creates the token Secret, and the
+    # TokenController that actually populates its data/token field is
+    # async, the same first-run timing gap the k3s role's own node-label
+    # read already retries against. no_log covers this task because a
+    # failure's own output would otherwise echo the token secret's Secret
+    # object name is fine to show; the JWT in stdout is not.
+    - name: Read the admin-access ServiceAccount's token from its Secret
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - get
+          - secret
+          - "{{ admin_access_token_secret }}"
+          - -n
+          - "{{ admin_access_namespace }}"
+          - -o
+          - jsonpath={.data.token}
+      register: admin_kubeconfig_token_raw
+      until: admin_kubeconfig_token_raw.stdout | length > 0
+      retries: 10
+      delay: 3
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    # Reused, not re-read: k3s's own "Read this node's Tailscale IPv4
+    # address" task (ansible/roles/k3s/tasks/main.yml) is tagged always and
+    # runs earlier in site.yml's role order, so k3s_tailscale_ip is already
+    # a live fact for this host by the time this role runs, the same
+    # cross-role reliance admin-access's own k3s_role gate already leans on.
+
+    - name: Ensure the control node's kube config directory exists
+      ansible.builtin.file:
+        path: "{{ admin_kubeconfig_path | dirname }}"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      become: false
+
+    # ansible.builtin.template's own idempotency (a content diff against
+    # the existing file) is what "no changes on a re-run that already
+    # matches" means here, no extra check needed. no_log: true because the
+    # rendered content this task would otherwise show on failure carries
+    # the live bearer token.
+    - name: Write the scoped kubeconfig to the control node
+      ansible.builtin.template:
+        src: kubeconfig.yaml.j2
+        dest: "{{ admin_kubeconfig_path }}"
+        mode: "0600"
+      delegate_to: localhost
+      become: false
+      no_log: true
+      vars:
+        admin_kubeconfig_server_ip: "{{ k3s_tailscale_ip.stdout }}"
+        admin_kubeconfig_ca_data: "{{ admin_kubeconfig_ca_raw.content }}"
+        admin_kubeconfig_token: "{{ admin_kubeconfig_token_raw.stdout | b64decode | trim }}"
+
+    # `--tags verify`: proves #249's own acceptance criterion, mirroring
+    # the `gitops` role's own `stat` check for the daily age identity
+    # (ansible/roles/gitops/tasks/main.yml), existence and permissions
+    # only, the write task above is what keeps its *content* current.
+    - name: Check whether the kubeconfig exists on the control node
+      ansible.builtin.stat:
+        path: "{{ admin_kubeconfig_path }}"
+      delegate_to: localhost
+      become: false
+      register: admin_kubeconfig_stat
+      tags: verify
+
+    - name: Assert the kubeconfig is present with mode 0600
+      ansible.builtin.assert:
+        that:
+          - admin_kubeconfig_stat.stat.exists
+          - admin_kubeconfig_stat.stat.mode == '0600'
+        fail_msg: >-
+          Scoped kubeconfig missing or not mode 0600 at
+          {{ admin_kubeconfig_path }} on the control node.
+        quiet: true
+      tags: verify
