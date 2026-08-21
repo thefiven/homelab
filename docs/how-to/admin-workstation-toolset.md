@@ -61,11 +61,13 @@ The `admin-access` role mints the cluster-side RBAC (a ServiceAccount,
 ClusterRole, and ClusterRoleBinding), and `admin-kubeconfig` assembles and
 delivers the kubeconfig itself, to this workstation
 (`docs/reference/platform-state.md`, invariants 11-12). Confirm they've
-already run, without changing anything:
+already run, without changing anything, from the repo root (the committed
+`ansible.cfg` there is what makes `-l` resolve against
+`ansible/inventory.yml` instead of silently targeting nothing, ADR-0013
+gesture 7):
 
 ```
-cd ansible
-ansible-playbook site.yml --tags verify -l node1 -e @host_vars/node1_secrets.yml
+ansible-playbook ansible/site.yml --tags verify -l node1 -e @ansible/host_vars/node1_secrets.yml
 ```
 
 This checks every platform invariant, not just these two (`docs/reference/platform-state.md`);
