@@ -1,3 +1,4 @@
 ansible/roles/nfs-client role-name
 ansible/roles/node-exporter role-name
 ansible/roles/admin-access role-name
+ansible/roles/admin-kubeconfig role-name

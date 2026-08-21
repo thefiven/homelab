@@ -19,6 +19,7 @@
     - k3s         # server/agent mode (#70)
     - gitops      # Flux health + sops-age secret (#115), needs a running k3s
     - admin-access # RBAC for the admin workstation's scoped kubeconfig (ADR-0019, #248), needs k3s kubectl
+    - admin-kubeconfig # assembles and delivers that kubeconfig to the control node (ADR-0019, #249), needs admin-access's token Secret
     # `vars:` maps the role's generic `nfs_client_nas_export_base` from a
     # role-specific source name (`nfs_client_immich_nas_export_base`)
     # instead of leaving the role read a bare `nfs_client_nas_export_base`
