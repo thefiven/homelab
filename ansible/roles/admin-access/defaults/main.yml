@@ -1,0 +1,24 @@
+# Defaults for the `admin-access` role (ADR-0019, #244/#246/#248).
+#
+# Named here instead of inlined in tasks/main.yml: the token Secret this
+# role creates is read again by #249 (kubeconfig assembly), so its name
+# and the ServiceAccount/namespace it references are worth a single
+# source of truth rather than a literal repeated across two roles.
+
+# Dedicated namespace for the ServiceAccount and its token Secret, not
+# reused from kube-system or default (ADR-0019's own Implementation
+# Decisions).
+admin_access_namespace: admin-access
+
+# The ServiceAccount flux9s/k9s/kubectl authenticate as.
+admin_access_service_account: admin-access
+
+admin_access_cluster_role: admin-access
+admin_access_cluster_role_binding: admin-access
+
+# The classic non-expiring `kubernetes.io/service-account-token` Secret
+# (ADR-0019: chosen over the TokenRequest short-lived form). Suffixed
+# `-token` rather than reusing `admin_access_service_account`'s value: the
+# Secret and the ServiceAccount are different object kinds in the same
+# namespace, and #249 reads this name specifically.
+admin_access_token_secret: admin-access-token

@@ -1,0 +1,188 @@
+---
+# Role `admin-access`: mints the cluster-side RBAC objects ADR-0019 scoped
+# for the admin workstation's kubeconfig (#244, #246, this ticket #248): a
+# dedicated namespace, ServiceAccount, ClusterRole, ClusterRoleBinding, and
+# a non-expiring token Secret. `k3s kubectl apply`, no GitOps/Flux
+# involvement (this is Ansible-applied cluster state, the same category as
+# `gitops`'s own `sops-age` secret). No kubeconfig assembly or workstation
+# delivery here, that is #249, deliberately kept separate so this role is
+# verifiable against the cluster alone.
+#
+# Same `k3s_role == 'server'` gate `gitops` uses, same reasoning: this role
+# runs after `gitops` in site.yml, so `k3s`'s own assert (tagged always)
+# has already failed loudly for any host with k3s_role unset by the time
+# this block runs.
+- name: Mint the admin-access RBAC objects on the k3s server
+  when: k3s_role == 'server'
+  block:
+    # All five objects in one `apply`, not the `create --dry-run=client -o
+    # yaml | apply` trick `gitops` uses for `sops-age`: that trick exists
+    # there because the Secret's content comes from a literal file on the
+    # control node, not a full manifest. Here every object is already a
+    # complete declarative manifest, so a plain `apply -f -` is `kubectl`'s
+    # own idempotency, no dry-run round-trip needed. A quoted heredoc
+    # (`<<'MANIFEST'`) keeps the shell from touching `$`-free YAML content
+    # it has no reason to expand; Jinja substitution below happens at the
+    # Ansible templating layer before the shell ever sees this string.
+    #
+    # ClusterRole rules: read (`get`/`list`/`watch`) is enumerated by
+    # resource kind, never `resources: ["*"]`. A resource wildcard in
+    # Kubernetes RBAC has no way to exclude one kind: it also grants every
+    # subresource, `pods/exec` and `pods/log` included, and every other
+    # kind in the same apiGroup, `secrets` included. `gitops`'s own
+    # `sops-age` secret (`ansible/roles/gitops/tasks/main.yml`) holds the
+    # raw daily age key that decrypts the whole repo, so a wildcard here
+    # would hand a compromised daily-driver workstation exactly the
+    # asymmetry ADR-0009 and ADR-0019 both exist to avoid. The core
+    # apiGroup (`""`) therefore lists resource kinds explicitly, with no
+    # `secrets` entry; every other built-in group flux9s/k9s/kubectl need
+    # can safely use `resources: ["*"]` because none of them carry a
+    # `secrets` kind or a pod-exec/log-style subresource. Flux's own three
+    # CRD groups get their own read rule too (not just the patch rule
+    # below), so flux9s can actually show reconciliation status; `"*"`
+    # resources is safe there because those groups belong to Flux
+    # exclusively. Write stays `patch` only, the exact verb `flux
+    # reconcile`/`suspend`/`resume` operate through (ADR-0019). No
+    # `pods/exec`, `pods/log`, or `delete` rule anywhere.
+    #
+    # Secret: the classic form (`type: kubernetes.io/service-account-token`
+    # plus the `kubernetes.io/service-account.name` annotation) that the
+    # TokenController still populates with `token`/`ca.crt` today, just not
+    # auto-created since Kubernetes 1.24 (ADR-0019). No `data:` here, the
+    # controller fills it in after `apply`, which is also why re-applying
+    # this same manifest reports no change: the fields this role owns never
+    # move.
+    - name: Create or update the admin-access namespace, ServiceAccount, ClusterRole, ClusterRoleBinding, and token Secret
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          k3s kubectl apply -f - <<'MANIFEST'
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: {{ admin_access_namespace }}
+          ---
+          apiVersion: v1
+          kind: ServiceAccount
+          metadata:
+            name: {{ admin_access_service_account }}
+            namespace: {{ admin_access_namespace }}
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: ClusterRole
+          metadata:
+            name: {{ admin_access_cluster_role }}
+          rules:
+            - apiGroups: [""]
+              resources:
+                - namespaces
+                - nodes
+                - pods
+                - services
+                - endpoints
+                - configmaps
+                - persistentvolumes
+                - persistentvolumeclaims
+                - replicationcontrollers
+                - resourcequotas
+                - limitranges
+                - serviceaccounts
+                - events
+              verbs: [get, list, watch]
+            - apiGroups:
+                - apps
+                - batch
+                - networking.k8s.io
+                - storage.k8s.io
+                - rbac.authorization.k8s.io
+                - apiextensions.k8s.io
+                - policy
+                - autoscaling
+                - coordination.k8s.io
+                - discovery.k8s.io
+                - node.k8s.io
+                - events.k8s.io
+                - metrics.k8s.io
+              resources: ["*"]
+              verbs: [get, list, watch]
+            - apiGroups: [kustomize.toolkit.fluxcd.io, helm.toolkit.fluxcd.io, source.toolkit.fluxcd.io]
+              resources: ["*"]
+              verbs: [get, list, watch]
+            - apiGroups: [kustomize.toolkit.fluxcd.io, helm.toolkit.fluxcd.io, source.toolkit.fluxcd.io]
+              resources: ["*"]
+              verbs: [patch]
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: ClusterRoleBinding
+          metadata:
+            name: {{ admin_access_cluster_role_binding }}
+          subjects:
+            - kind: ServiceAccount
+              name: {{ admin_access_service_account }}
+              namespace: {{ admin_access_namespace }}
+          roleRef:
+            kind: ClusterRole
+            name: {{ admin_access_cluster_role }}
+            apiGroup: rbac.authorization.k8s.io
+          ---
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: {{ admin_access_token_secret }}
+            namespace: {{ admin_access_namespace }}
+            annotations:
+              kubernetes.io/service-account.name: {{ admin_access_service_account }}
+          type: kubernetes.io/service-account-token
+          MANIFEST
+      register: admin_access_apply
+      # `kubectl apply` prints one "<kind>/<name> unchanged|configured|created"
+      # line per object; "changed" only if at least one line says otherwise
+      # (the single-object substring check `gitops`'s own `sops-age` task
+      # uses would false-negative here the moment any one of these five
+      # objects actually changed while the rest stayed "unchanged").
+      changed_when: >-
+        admin_access_apply.stdout_lines
+        | reject('search', 'unchanged')
+        | list | length > 0
+
+    # `--tags verify`: proves #246's own testing decision (a), that the
+    # ServiceAccount, ClusterRole, and ClusterRoleBinding all exist, the
+    # same existence-only pattern `gitops`'s own verify tags use for
+    # `sops-age`. Looped, the same way `nfs-client`'s own verify checks
+    # loop over its mounts, rather than three near-identical task pairs.
+    - name: Check whether the admin-access RBAC objects exist
+      ansible.builtin.command:
+        argv: "{{ ['k3s', 'kubectl', 'get'] + item.args }}"
+      loop:
+        - name: ServiceAccount
+          args:
+            - serviceaccount
+            - "{{ admin_access_service_account }}"
+            - -n
+            - "{{ admin_access_namespace }}"
+        - name: ClusterRole
+          args:
+            - clusterrole
+            - "{{ admin_access_cluster_role }}"
+        - name: ClusterRoleBinding
+          args:
+            - clusterrolebinding
+            - "{{ admin_access_cluster_role_binding }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: admin_access_rbac_check
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      tags: verify
+
+    - name: Assert every admin-access RBAC object is present
+      ansible.builtin.assert:
+        that: item.rc == 0
+        fail_msg: >-
+          admin-access {{ item.item.name }} not present: {{ item.stderr }}
+        quiet: true
+      loop: "{{ admin_access_rbac_check.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      tags: verify

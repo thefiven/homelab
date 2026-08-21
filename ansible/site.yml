@@ -18,6 +18,7 @@
     - nvidia      # driver + nvidia-container-toolkit (#68), before k3s so the runtime exists at k3s's first start
     - k3s         # server/agent mode (#70)
     - gitops      # Flux health + sops-age secret (#115), needs a running k3s
+    - admin-access # RBAC for the admin workstation's scoped kubeconfig (ADR-0019, #248), needs k3s kubectl
     # `vars:` maps the role's generic `nfs_client_nas_export_base` from a
     # role-specific source name (`nfs_client_immich_nas_export_base`)
     # instead of leaving the role read a bare `nfs_client_nas_export_base`
