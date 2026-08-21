@@ -66,6 +66,10 @@ it runs, not committed to a doc that immediately goes stale.
     actual TLS handshake against `https://<tailscale-ip>:6443` that
     validates against the cluster CA, not just an offline read of the
     certificate's SAN list. `k3s` role, `--tags verify`.
+11. **admin-access RBAC objects present.** The `admin-access` ServiceAccount,
+    ClusterRole, and ClusterRoleBinding (ADR-0019/#244, #246/#248) all exist
+    on the cluster: the credential #249's kubeconfig authenticates as.
+    `admin-access` role, `--tags verify`.
 
 ## Known gap: three components outside GitOps
 
