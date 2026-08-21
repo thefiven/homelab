@@ -34,7 +34,24 @@ k3s_channel: stable
 # GPU manifest (the device plugin's own upstream manifest included) with that
 # field. Non-GPU pods are unaffected: nvidia-container-runtime passes through
 # to runc when no NVIDIA_VISIBLE_DEVICES is set on the container.
-k3s_server_exec_args: --disable=local-storage --default-runtime=nvidia
+#
+# `--kubelet-arg=system-reserved=memory=7.5Gi` (#261, ADR-0020): the
+# admission gate only holds if node-allocatable is actually below capacity
+# by what's already spent outside Kubernetes. ADR-0020's reserved-outside-k8s
+# floor is host (1 GiB, systemd slices) + filesystem cache (5 GiB, the `zfs`
+# role's ARC/dirty-data caps) + the k3s server process itself (1.5 GiB) =
+# 7.5 GiB, none of which the scheduler could otherwise see. Kept as a plain
+# flag, not a variable, matching this string's own existing flags: the
+# reserved floor is ADR-0020's number, not a per-deployment tunable.
+#
+# `--kubelet-arg=eviction-hard=memory.available<500Mi`: without a hard
+# eviction threshold the kubelet never proactively reclaims memory, so a
+# pod that overruns its envelope gets picked off at random by the kernel
+# OOM killer instead of evicted in an order the kubelet controls.
+k3s_server_exec_args: >-
+  --disable=local-storage --default-runtime=nvidia
+  --kubelet-arg=system-reserved=memory=7.5Gi
+  --kubelet-arg=eviction-hard=memory.available<500Mi
 
 # Agent mode only: which inventory host is the k3s server to join. No
 # default, same reasoning as k3s_role — set it in inventory or host_vars

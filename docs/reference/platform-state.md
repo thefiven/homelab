@@ -73,6 +73,12 @@ it runs, not committed to a doc that immediately goes stale.
 12. **Scoped kubeconfig delivered to the control node.** `~/.kube/config`
     exists on the control node, mode `0600` (ADR-0019/#244, #246/#249).
     `admin-kubeconfig` role, `--tags verify`.
+13. **Node-allocatable memory reserves the floor the scheduler can't see.**
+    ADR-0002's admission-gate verdict rests on node-allocatable already
+    excluding what's spent outside Kubernetes (host, filesystem cache, the
+    k3s server process itself); without `system-reserved`/`eviction-hard`
+    wired, allocatable silently equals capacity instead (#261, ADR-0020).
+    `k3s` role, `--tags verify`.
 
 ## Known gap: three components outside GitOps
 
