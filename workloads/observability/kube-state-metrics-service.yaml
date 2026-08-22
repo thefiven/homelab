@@ -1,0 +1,15 @@
+# Plain ClusterIP, same reasoning as victoriametrics-service.yaml:
+# kube-state-metrics is a scrape target consumed in-cluster only, no
+# operator-facing UI to reach over LAN/Tailscale.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-state-metrics
+  namespace: observability
+spec:
+  selector:
+    app: kube-state-metrics
+  ports:
+    - name: http-metrics
+      port: 8080
+      targetPort: http-metrics

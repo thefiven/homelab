@@ -1,0 +1,95 @@
+# kube-state-metrics: object state (Deployment/Job/PVC status, container
+# waiting reasons), the half of pod visibility cAdvisor and the kubelet's
+# resource endpoints (#267) don't carry. Closes the gap that let
+# `cloudflared` sit in CreateContainerConfigError for two days and six hours
+# unnoticed (#268).
+#
+# Image pinned to a manifest-list digest for linux/amd64, resolved from
+# registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.20.0 (latest
+# stable release, 2026-08-22) via the registry's own API, same pattern
+# every other image in this repository uses.
+#
+# --resources restricts which collectors run to the four this ticket reads
+# from: pods and persistentvolumeclaims (core), deployments (apps), jobs
+# (batch) - kube-state-metrics-rbac.yaml's ClusterRole grants list/watch on
+# exactly these four and nothing else. Upstream's default enables list/watch
+# informers across roughly 30 resource types; namespaces, secrets,
+# configmaps, nodes and the rest stay unwatched.
+#
+# --metric-allowlist then restricts what those four collectors expose to the
+# five series #268 asks for. Each collector emits many metrics beyond these
+# (kube_pod_info, kube_pod_labels, kube_deployment_created, ...); the
+# allowlist is an exact-name list, not a resource-level cut, so it is the
+# actual cardinality bound scraped and stored, independent of whichever
+# other metrics a future kube-state-metrics release adds to these same four
+# collectors.
+#
+# Job scrape config lives in victoriametrics-configmap.yaml, same 60s
+# interval as every other target (ADR-0002).
+#
+# Two container ports, matching upstream's own example deployment
+# (examples/standard/deployment.yaml): http-metrics (8080) is the series
+# above; telemetry (8081) is kube-state-metrics's self-metrics, not scraped
+# here, kept only because /readyz lives on it.
+#
+# securityContext block copied from upstream's own example: non-root,
+# read-only rootfs, all capabilities dropped. kube-state-metrics writes
+# nothing to disk, so read-only rootfs costs nothing here.
+#
+# Memory: 150 MiB request and limit both, ADR-0020's estimate for this
+# exporter, inside the 3.75 GiB observability envelope it also sets (3088
+# MiB requested before this ticket, headroom for exactly this addition).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kube-state-metrics
+  namespace: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kube-state-metrics
+  template:
+    metadata:
+      labels:
+        app: kube-state-metrics
+    spec:
+      serviceAccountName: kube-state-metrics
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: kube-state-metrics
+          image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.20.0@sha256:01171220c7c059afc85034ffe687bfe7249e41c0cc46fbe9a5128503ceee3016
+          args:
+            - --resources=pods,persistentvolumeclaims,deployments,jobs
+            - --metric-allowlist=kube_pod_container_status_restarts_total,kube_pod_container_status_waiting_reason,kube_deployment_status_replicas_unavailable,kube_job_status_failed,kube_persistentvolumeclaim_status_phase
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http-metrics
+              containerPort: 8080
+            - name: telemetry
+              containerPort: 8081
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http-metrics
+            initialDelaySeconds: 5
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: telemetry
+            initialDelaySeconds: 5
+            timeoutSeconds: 5
+          resources:
+            requests:
+              memory: 150Mi
+            limits:
+              memory: 150Mi
