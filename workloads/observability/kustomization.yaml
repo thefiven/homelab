@@ -13,6 +13,7 @@ resources:
   - kube-state-metrics-rbac.yaml
   - kube-state-metrics-deployment.yaml
   - kube-state-metrics-service.yaml
+  - gpu-exporter-daemonset.yaml
   - victoriametrics-rbac.yaml
   - victoriametrics-pv.yaml
   - victoriametrics-pvc.yaml
