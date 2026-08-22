@@ -89,3 +89,19 @@ repository. Bringing them under GitOps management is not one of this page's
 invariants and not in scope for #101 — noted here so their absence from
 `clusters/homelab/` isn't mistaken for an oversight when reading the
 manifests next to this doc.
+
+## Known gap: svclb cannot carry a memory cap
+
+ADR-0020's platform-pods line assumes every consumer in it carries a
+request and limit (ADR-0002's first condition). Traefik does now, through
+the `HelmChartConfig` `ansible/roles/k3s/templates/traefik-config.yaml.j2`
+templates (#264). svclb does not, and cannot on the k3s version pinned
+here (`v1.36.3+k3s1`): its generated pod comes from k3s's own `ServiceLB`
+controller (`pkg/cloudprovider/servicelb.go`), not a Helm chart, and the
+only per-service overrides it reads from `svccontroller.k3s.cattle.io/*`
+annotations are `priorityclassname`, `tolerations`, and `nodeselector`,
+none of them resources. svclb's two proxy containers measure about 1 MiB
+combined (`kubectl top pod`, 2026-08-22) and stay `BestEffort`, the one
+documented exception to invariant 13 and to ADR-0002's first condition.
+Revisit if a k3s upgrade adds a resources override, or if ServiceLB is
+ever replaced.

@@ -128,45 +128,27 @@
     # (Traefik included), same mechanism the k3s_server_exec_args comment
     # above already points to for the other half of this AddOn's config.
     #
-    # Gated, not asserted: k3s_traefik_domain/k3s_traefik_acme_email have no
-    # default (defaults/main.yml) because the real domain and contact
-    # address aren't decided yet (ADR-0011's own Consequences section). An
-    # `assert` here would hard-fail this role's whole server block on
-    # node1's every single run until a domain is bought, taking gitops and
-    # both nfs-client roles down with it for an unrelated change, the same
-    # "skip quietly until the prerequisite exists" shape the `gitops` role's
-    # sops-age task already uses for "Flux not bootstrapped yet".
-    # `default('', true)` folds an unset *or* explicit YAML-null value to
-    # the same empty string, so a bare `k3s_traefik_domain:` left in
-    # host_vars (this file's own commented-out example) skips too, instead
-    # of templating a literal "None" into the manifest. Computed once so
-    # the template task below and its removal counterpart can't disagree.
+    # k3s_traefik_domain/k3s_traefik_acme_email have no default
+    # (defaults/main.yml) because the real domain and contact address
+    # aren't decided yet (ADR-0011's own Consequences section, #162). The
+    # ACME-specific keys inside the template are conditional on both being
+    # set; the memory cap (#264) is not, and the template is now always
+    # applied, so that fix doesn't wait on a domain purchase. `default('',
+    # true)` folds an unset *or* explicit YAML-null value to the same empty
+    # string, so a bare `k3s_traefik_domain:` left in host_vars (this
+    # file's own commented-out example) still counts as unset instead of
+    # templating a literal "None" into the manifest.
     - name: Determine whether Traefik's ACME domain and contact are set
       ansible.builtin.set_fact:
         k3s_traefik_acme_configured: >-
           {{ (k3s_traefik_domain | default('', true) | length > 0)
           and (k3s_traefik_acme_email | default('', true) | length > 0) }}
 
-    - name: Template the Traefik HelmChartConfig for Cloudflare DNS-01 ACME
+    - name: Template the Traefik HelmChartConfig
       ansible.builtin.template:
         src: traefik-config.yaml.j2
         dest: /var/lib/rancher/k3s/server/manifests/traefik-config.yaml
         mode: "0644"
-      when: k3s_traefik_acme_configured
-
-    # Converges the other way too: a domain/email set once and later
-    # unset (a reverted choice, not just the never-configured case above)
-    # would otherwise leave k3s auto-applying a stale HelmChartConfig
-    # forever, this task's absence being the only thing that ever
-    # templated it in the first place. k3s doesn't reconcile a *removed*
-    # manifest's effects on its own either, but at least nothing keeps
-    # reapplying the old domain/email past the point this role stops
-    # asking for it.
-    - name: Remove the Traefik HelmChartConfig when ACME isn't configured
-      ansible.builtin.file:
-        path: /var/lib/rancher/k3s/server/manifests/traefik-config.yaml
-        state: absent
-      when: not k3s_traefik_acme_configured
 
 - name: Configure this node as a k3s agent
   when: k3s_role == 'agent'
