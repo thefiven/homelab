@@ -12,22 +12,11 @@
 # this file must never be named traefik.yaml, the AddOn's own manifest that
 # k3s overwrites with defaults on every start.
 #
-# The wildcard domain lives under ports.websecure.http.tls, not under
-# certificatesResolvers.cloudflare.acme: `domains` isn't a field of the
-# resolver's own static acme config (verified against traefik-helm-chart's
-# values.yaml and Traefik's own acme reference docs, which only document
-# `domains` per-router or per-entrypoint): setting it at the entrypoint
-# makes it Traefik's default for every router on websecure that doesn't
-# name its own domains, which is what pre-provisions the wildcard cert at
-# startup instead of waiting for the first IngressRoute to ask for one.
-#
-# ponytail: no persistence for /data/acme.json. #19 (storage layout) hasn't
-# settled a StorageClass yet, and this role already disables the
-# local-storage AddOn (defaults/main.yml). Traefik re-requests the wildcard
-# cert from scratch on every pod restart until then, which risks Let's
-# Encrypt's 5-duplicate-certificate/week rate limit if restarts get
-# frequent. Add `persistence.enabled: true` + a storageClass once #19 gives
-# one to point at.
+# Always templated, unlike the ACME block below (#264): the memory cap is
+# the fix for a real BestEffort/OOM-killer exposure and has no dependency
+# on a domain existing, so it can't wait behind #162's still-unbought one
+# (docs/reference/platform-state.md's svclb exception note has the other
+# half of that ticket). Only the ACME-specific keys stay conditional.
 apiVersion: helm.cattle.io/v1
 kind: HelmChartConfig
 metadata:
@@ -35,6 +24,44 @@ metadata:
   namespace: kube-system
 spec:
   valuesContent: |-
+    # 61 MiB observed (#264). Request stays at 64Mi, the number the
+    # platform-pods budget below is built on; the limit goes to 128Mi
+    # instead of matching it, because 64Mi over 61Mi observed is ~5%
+    # headroom and (once ACME below is configured) Traefik re-requests its
+    # wildcard cert from scratch on every restart, a spike this budget
+    # can't afford to OOM on. ADR-0020's platform-pods table reserves
+    # memory "as pod requests" (its own table header), not limits, so
+    # widening the limit alone doesn't touch that reservation. No CPU
+    # request/limit either way: ADR-0002 deliberately runs no CPU quota, so
+    # this pod (like every other memory-only-capped pod in the repo) is
+    # QoS class Burstable, not Guaranteed.
+    #
+    # Platform-pods line, ADR-0020's 1 GiB envelope, by request: coredns
+    # 70Mi + metrics-server 70Mi + cloudflared 64Mi + the smoke target 16Mi
+    # + backup CronJobs 736Mi + this 64Mi = 1020Mi, a 4Mi margin.
+    resources:
+      requests:
+        memory: 64Mi
+      limits:
+        memory: 128Mi
+{% if k3s_traefik_acme_configured | bool %}
+    # The wildcard domain lives under ports.websecure.http.tls, not under
+    # certificatesResolvers.cloudflare.acme: `domains` isn't a field of the
+    # resolver's own static acme config (verified against
+    # traefik-helm-chart's values.yaml and Traefik's own acme reference
+    # docs, which only document `domains` per-router or per-entrypoint):
+    # setting it at the entrypoint makes it Traefik's default for every
+    # router on websecure that doesn't name its own domains, which is what
+    # pre-provisions the wildcard cert at startup instead of waiting for
+    # the first IngressRoute to ask for one.
+    #
+    # ponytail: no persistence for /data/acme.json. #19 (storage layout)
+    # hasn't settled a StorageClass yet, and this role already disables the
+    # local-storage AddOn (defaults/main.yml). Traefik re-requests the
+    # wildcard cert from scratch on every pod restart until then, which
+    # risks Let's Encrypt's 5-duplicate-certificate/week rate limit if
+    # restarts get frequent. Add `persistence.enabled: true` + a
+    # storageClass once #19 gives one to point at.
     env:
       - name: {{ k3s_traefik_cloudflare_secret_key }}
         valueFrom:
@@ -57,3 +84,4 @@ spec:
               - main: "{{ k3s_traefik_domain }}"
                 sans:
                   - "*.{{ k3s_traefik_domain }}"
+{% endif %}
