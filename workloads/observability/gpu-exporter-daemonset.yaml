@@ -1,0 +1,128 @@
+# GPU exporter (#269): the RTX 3070 Ti is thermally unwatched today (risk
+# register 9) and ADR-0020 is about to put Plex hardware transcoding on the
+# same card as Immich's machine learning, sharing 8 GiB of VRAM with no
+# isolation between the two time-sliced replicas #258 configured. This
+# DaemonSet is the missing visibility: temperature, VRAM used/total,
+# utilisation, power draw and encoder session count, so a pre-move baseline
+# exists before the 2026-09-26 room change. Alert rules are explicitly out
+# of scope (owned by the Alert-or-Signal decision ticket); this only makes
+# the series queryable.
+#
+# utkuozdemir/nvidia_gpu_exporter, not NVIDIA's own DCGM exporter: upstream's
+# own README draws the line this platform sits on — "if you run datacenter
+# cards on Kubernetes with the GPU Operator already installed, DCGM-exporter
+# is probably the better fit; this exporter aims at [homelab/consumer GPUs
+# without the Operator stack]". A single consumer RTX card with no GPU
+# Operator is exactly that case, and the image is 11 MB against DCGM's
+# multi-hundred-MB footprint (v1.14.0, docker.io/utkuozdemir/nvidia_gpu_exporter,
+# checked 2026-08-22) for the same `nvidia-smi`-sourced series this ticket
+# asks for.
+#
+# GPU access without the device plugin: NVIDIA_VISIBLE_DEVICES=all and
+# NVIDIA_DRIVER_CAPABILITIES=utility below are what the nvidia-container-
+# runtime's prestart hook reads to inject the driver libraries and the
+# nvidia-smi binary into the container (k3s's node-wide
+# `--default-runtime=nvidia`, ansible/roles/k3s, means every pod already
+# runs under that runtime; no `nvidia.com/gpu` in resources and no
+# runtimeClassName needed, same as ml-deployment.yaml's own reasoning for
+# omitting the latter). Deliberately no `nvidia.com/gpu` resource request:
+# the node advertises exactly 2 time-sliced replicas (#258), one held
+# permanently by immich-machine-learning, leaving one for the `nvidia`
+# role's transient `--tags verify` probe. Claiming the resource here would
+# make this exporter the third, permanent claimant and starve that probe,
+# the exact failure #258 was opened to fix. This exporter's Helm chart
+# documents the same non-claiming pattern for clusters where the NVIDIA
+# runtime is already the node default (charts/nvidia-gpu-exporter/values.yaml,
+# `runtimeClassName`).
+#
+# --query-field-names restricts nvidia-smi's query to exactly the series
+# this ticket asks for, at the source, same allowlist reasoning
+# kube-state-metrics-deployment.yaml's --metric-allowlist uses, rather than
+# AUTO's full field discovery. No decoder session count: verified against
+# this exporter's own captured metrics (internal/integration/testdata,
+# every GPU and driver combination it ships fixtures for, v1.14.0) that
+# `encoder.stats.sessionCount` exists as an nvidia-smi query-gpu field but
+# no decoder equivalent does — only `utilization.decoder`, a percentage, not
+# a session count. Encoder gets a session count; decoder gets the nearest
+# signal nvidia-smi actually exposes.
+#
+# Memory: 64Mi request and limit, both set (ADR-0020's enforced-envelope
+# method). No measured baseline yet, unlike kube-state-metrics's 150Mi: this
+# is a single Go binary that execs nvidia-smi once per 60s scrape and holds
+# no dataset, so 64Mi is a deliberately generous ceiling above the low tens
+# of MiB typical of exporters this shape, not a measured number. Comfortably
+# inside the 602 MiB of headroom kube-state-metrics-deployment.yaml's own
+# comment left in the 3.75 GiB observability envelope.
+#
+# securityContext: the upstream image stays root by design (its own
+# Dockerfile: "GPU access itself does not need root, [but] changing the
+# execution identity of a widely deployed image is a migration of its own"),
+# so runAsNonRoot is left unset here rather than fought; the other three
+# hardening flags kube-state-metrics-deployment.yaml sets cost nothing
+# against that and are kept.
+#
+# automountServiceAccountToken: false, no ServiceAccount at all: this
+# exporter only execs nvidia-smi and serves HTTP, it never calls the
+# Kubernetes API (same reasoning the chart's own values.yaml gives for the
+# same default).
+#
+# Liveness at /-/healthy and readiness at /-/ready are process-level, not
+# collection-level, on purpose (chart values.yaml): a wedged nvidia-smi
+# should stay scrapeable so the failure shows up as a metric
+# (`nvidia_smi_last_collect_success`) instead of a restart loop that hides
+# it.
+#
+# No Service: victoriametrics-configmap.yaml's job below discovers pods
+# directly via `role: pod` kubernetes_sd_configs, the same pattern
+# kube-state-metrics and traefik already use in this file; nothing else
+# reaches this exporter in-cluster.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: gpu-exporter
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: gpu-exporter
+  template:
+    metadata:
+      labels:
+        app: gpu-exporter
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: gpu-exporter
+          image: docker.io/utkuozdemir/nvidia_gpu_exporter:1.14.0@sha256:cc80ccd60b2fecd196c7257ea75a1a2230694e4b4ae21b6eaeb0ccaa98079a8a
+          args:
+            - --query-field-names=temperature.gpu,memory.used,memory.total,utilization.gpu,power.draw,encoder.stats.sessionCount,utilization.decoder
+          env:
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: all
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: utility
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 9835
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            initialDelaySeconds: 5
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 5
+            timeoutSeconds: 5
+          resources:
+            requests:
+              memory: 64Mi
+            limits:
+              memory: 64Mi

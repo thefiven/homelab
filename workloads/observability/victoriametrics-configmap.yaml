@@ -183,6 +183,27 @@ data:
           - source_labels: [__meta_kubernetes_pod_name]
             target_label: instance
 
+      # gpu-exporter (#269): role: pod, same reasoning as the kube-state-metrics
+      # job above - one discovery mechanism for every in-cluster target. No
+      # metric_relabel_configs: gpu-exporter-daemonset.yaml's own
+      # --query-field-names flag already restricts nvidia-smi's query to
+      # exactly the series this ticket asks for, so filtering again here
+      # would be the same restriction enforced twice.
+      - job_name: gpu-exporter
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [observability]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            regex: gpu-exporter
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            regex: http
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: instance
+
       - job_name: kubelet-volume-stats
         scheme: https
         tls_config:
