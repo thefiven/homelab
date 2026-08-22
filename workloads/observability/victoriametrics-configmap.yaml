@@ -25,6 +25,45 @@
 # ADR-0002 names this explicitly ("forces a 60-second scrape interval
 # rather than 15") as one of the three levers that keep the 10 GB/day
 # observability write envelope binding.
+#
+# Three more jobs (#267) scrape the kubelet directly at its own :10250 (the
+# port role: node's discovery already sets, so no port-rewrite relabeling
+# like node-exporter's), authenticated the same way victoriametrics-rbac.yaml's
+# `nodes/metrics` grant expects: the pod's own mounted ServiceAccount token
+# as bearer, its mounted CA to verify the kubelet's serving certificate
+# (k3s signs it from the same cluster CA, so no insecure_skip_verify).
+#
+# The three kubelet paths overlap in what they carry, so each job keeps a
+# disjoint slice instead of re-collecting what another job already covers
+# cheaper elsewhere:
+#
+# - kubelet-resource (`/metrics/resource`, the KEP-2371 resource-metrics
+#   endpoint): container_cpu_usage_seconds_total and
+#   container_memory_working_set_bytes, labelled with just
+#   container/namespace/pod — no cgroup path, no image, no per-core split.
+#   This is the per-container CPU/memory source ADR-0002 asks for; kept as
+#   the cheap version rather than cAdvisor's, which emits the identical two
+#   names again under a heavier label set (measured live: 160 series total
+#   on this node's /metrics/resource against 4035 lines of container_* alone
+#   on /metrics/cadvisor). node_/pod_ aggregates ride along at no extra
+#   scrape cost.
+# - kubelet-cadvisor (`/metrics/cadvisor`): kept only for what
+#   /metrics/resource does not carry — container_memory_rss and
+#   container_memory_cache (the working-set breakdown) and
+#   container_fs_usage_bytes (per-container writable-layer usage). CPU and
+#   working-set are deliberately left out of this job's keep list: scraping
+#   them here too would double the same series under a second `job` label.
+#   `container != ""` drops the cgroup-hierarchy rollups (node/pod-level
+#   aggregate entries with no container label) that make up most of that
+#   endpoint's raw volume; `id` is labeldropped as the one truly
+#   high-cardinality label left (a per-cgroup path, redundant with
+#   container/namespace/pod), `name` as a redundant legacy Docker field.
+# - kubelet-volume-stats (`/metrics`, the kubelet's general registry, the
+#   only one of the three that carries `kubelet_volume_stats_*`): filtered
+#   to that one metric family. The plain endpoint also carries the kubelet's
+#   own process/workqueue/client-latency metrics, none of which this
+#   platform reads, so everything else is dropped rather than ingested and
+#   never queried.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -77,3 +116,56 @@ data:
             replacement: '${1}:9100'
           - source_labels: [__meta_kubernetes_pod_name]
             target_label: instance
+
+      - job_name: kubelet-resource
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        metrics_path: /metrics/resource
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_node_name]
+            target_label: instance
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: 'container_cpu_usage_seconds_total|container_memory_working_set_bytes|node_cpu_usage_seconds_total|node_memory_working_set_bytes|pod_cpu_usage_seconds_total|pod_memory_working_set_bytes'
+            action: keep
+
+      - job_name: kubelet-cadvisor
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        metrics_path: /metrics/cadvisor
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_node_name]
+            target_label: instance
+        metric_relabel_configs:
+          - source_labels: [container]
+            regex: '.+'
+            action: keep
+          - source_labels: [__name__]
+            regex: 'container_memory_rss|container_memory_cache|container_fs_usage_bytes'
+            action: keep
+          - regex: 'id|name'
+            action: labeldrop
+
+      - job_name: kubelet-volume-stats
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        metrics_path: /metrics
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_node_name]
+            target_label: instance
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: 'kubelet_volume_stats_.*'
+            action: keep
