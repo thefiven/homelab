@@ -91,10 +91,11 @@ collaborative office server (#35) publishes one. Every memory limit on this
 platform is external: a cgroup, a systemd slice, an admission gate. Within
 the reserved floor of mandatory platform overhead (host, filesystem cache,
 control plane, GitOps, observability), the largest single line, the 5 GiB
-ZFS ARC, sits in the enforcement class that is weakest, kernel memory,
-invisible to any cgroup. Even its external cap is a target rather than a
-guarantee: an upstream OpenZFS 2.3.x bug let the ARC exceed `zfs_arc_max`,
-fixed only in July 2025.
+filesystem-cache envelope (#262 splits it into 4 GiB ZFS ARC plus 1 GiB
+`zfs_dirty_data_max`), sits in the enforcement class that is weakest, kernel
+memory, invisible to any cgroup. Even the ARC's external cap is a target
+rather than a guarantee: an upstream OpenZFS 2.3.x bug let the ARC exceed
+`zfs_arc_max`, fixed only in July 2025.
 
 **Accepted by:** ADR-0002.
 **Revisits when:** a consumer this platform runs publishes its own
