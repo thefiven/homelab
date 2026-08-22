@@ -7,10 +7,17 @@
 # gets carries no permissions at all, so without this it would fail listing
 # Node objects at scrape time.
 #
-# get/list/watch on `nodes` only: role: node's SD client reads Node objects
-# directly; it does not proxy through the API server the way scraping
-# kubelet/cAdvisor metrics would, so no `nodes/metrics` or `nodes/proxy`
-# permission is added for a scrape path this config doesn't use.
+# get/list/watch on `nodes` covers role: node's SD client, which reads Node
+# objects directly and does not proxy through the API server.
+#
+# `nodes/metrics` (get, #267) is the separate grant that scraping actually
+# needs: kubelet authorizes direct requests to its own /metrics,
+# /metrics/cadvisor and /metrics/resource paths against this specific
+# subresource (the same one the built-in `system:monitoring` ClusterRole
+# carries), not against `nodes/proxy` (exec/attach/portforward/log — every
+# other kubelet path) or `nodes/stats`. Granting only `nodes/metrics` scopes
+# this ServiceAccount to metrics and nothing that reaches into a running
+# container.
 #
 # `pods` added alongside `nodes` (162-06/#183): the Traefik scrape job in
 # victoriametrics-configmap.yaml discovers via role: pod (Traefik's Service
@@ -40,6 +47,9 @@ rules:
   - apiGroups: [""]
     resources: ["nodes", "pods"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["nodes/metrics"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
