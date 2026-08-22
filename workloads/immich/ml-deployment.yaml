@@ -30,25 +30,24 @@
 # the GHCR registry API, manifest-list digest, same convention as every other
 # image pin in this directory.
 #
-# Memory: 6 GiB request and limit, TEMPORARY, the same widen-then-revert
-# pattern #144 used for the api/microservices worker split (itself reverted
-# by #145): not a revision of ADR-0002's 2 GiB `machine-learning` steady-state
-# figure. Observed live on first real deployment (#136): a real bulk import
-# had already queued OCR, SmartSearch and AssetDetectFaces jobs before this
-# pod finished its first image pull, so all three job types hit it within
-# seconds of startup, each triggering its own model download-and-load
-# (buffalo_l detection+recognition, PP-OCRv5_mobile, ViT-B-32__openai)
-# concurrently in the one MACHINE_LEARNING_WORKERS=1 process. OOMKilled
-# (exit 137) three times in a row at 2Gi before this widening. This is
-# ADR-0002's own "sequenced, not budgeted" initial-import exception, just
-# triggered by cold-start model loading instead of asset volume: once every
-# model this corpus needs is on disk in the model-cache volume and warm in
-# the process, steady-state serving is far below 2Gi (#16 names ~1004 MiB for
-# the default CLIP model alone, the largest of the three). Revert to 2Gi
-# request/limit once `kubectl get pods -n immich -l
-# app=immich-machine-learning` shows no more restarts and the admin Job
-# Queues page is idle, the same signal #144's now-reverted (#145)
-# server-worker-deployment.yaml used.
+# Memory: 3 GiB request and limit, ADR-0020's machine-learning row (#263),
+# retiring the 6 GiB TEMPORARY widening this comment used to carry. That
+# widening was ADR-0002's own "sequenced, not budgeted" initial-import
+# exception: a real bulk import had already queued OCR, SmartSearch and
+# AssetDetectFaces jobs before this pod finished its first image pull, so all
+# three job types hit it within seconds of startup, each triggering its own
+# model download-and-load (buffalo_l detection+recognition, PP-OCRv5_mobile,
+# ViT-B-32__openai) concurrently in the one MACHINE_LEARNING_WORKERS=1
+# process, OOMKilling (exit 137) three times in a row at 2Gi. The exception
+# is spent: the corpus is 48 GB, not the 1.5 TB the exception was sized for,
+# the operator has confirmed the initial import is complete, and no
+# comparably intensive event is expected. 3Gi, not ADR-0002's original 2Gi,
+# because the model cache being warm on disk (the model-cache volume below)
+# only removes the download half of that OOM's cost, not the load half: the
+# same three models can still land concurrently in one worker process after
+# any restart. The gigabyte comes from postgres-statefulset.yaml and
+# server-deployment.yaml, both oversized for a 48 GB corpus in a way they
+# were not for a 1.5 TB one.
 # No CPU request or limit, same rationale as every other manifest here
 # (ADR-0002 rejects per-service CPU quotas outright). VRAM itself is not a
 # schedulable Kubernetes resource and is not budgeted here; #16's research
@@ -136,10 +135,10 @@ spec:
               mountPath: /cache
           resources:
             requests:
-              memory: 6Gi
+              memory: 3Gi
               nvidia.com/gpu: 1
             limits:
-              memory: 6Gi
+              memory: 3Gi
               nvidia.com/gpu: 1
       volumes:
         - name: model-cache

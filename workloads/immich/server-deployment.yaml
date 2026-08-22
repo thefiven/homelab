@@ -13,10 +13,11 @@
 # release, 2026-08-16) via the GHCR registry API, same as postgres/redis pin
 # to a manifest-list digest rather than a floating tag.
 #
-# Memory: 3 GiB request and limit both, ADR-0002's Immich table
-# (`immich-server` + jobs row). No CPU request or limit, same rationale as
-# postgres-statefulset.yaml (ADR-0002 rejects per-service CPU quotas
-# outright).
+# Memory: 2.5 GiB request and limit both, ADR-0020's Immich table
+# (`immich-server` + jobs row, revised down from ADR-0002's 3 GiB once
+# ADR-0020 measured 48 GB of corpus instead of 1.5 TB): 765 MiB observed
+# live. No CPU request or limit, same rationale as postgres-statefulset.yaml
+# (ADR-0002 rejects per-service CPU quotas outright).
 #
 # Job concurrency is left at Immich's own defaults (System Settings > Jobs,
 # stored in Postgres, not an env var upstream sets) rather than lowered:
@@ -132,9 +133,9 @@ spec:
               mountPath: /data/library
           resources:
             requests:
-              memory: 3Gi
+              memory: 2.5Gi
             limits:
-              memory: 3Gi
+              memory: 2.5Gi
       volumes:
         - name: derivatives
           persistentVolumeClaim:

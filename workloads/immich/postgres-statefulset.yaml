@@ -9,11 +9,13 @@
 # this, not a guess. DB_USERNAME/DB_DATABASE_NAME/DB_PASSWORD come from the
 # SOPS secret #132 created (secrets/immich-postgres.sops.yaml).
 #
-# Memory: 2.5 GiB request and limit both, ADR-0002's Postgres + VectorChord
-# row. No CPU request or limit: ADR-0002 rejects per-service CPU quotas
-# outright ("There is no admission gate on CPU"; hard quotas "produce
-# predictable numbers by wasting" on a single node where memory, not CPU,
-# is the scarce resource).
+# Memory: 2 GiB request and limit both, ADR-0020's Postgres + VectorChord row
+# (revised down from ADR-0002's 2.5 GiB once ADR-0020 measured 48 GB of
+# corpus instead of 1.5 TB): Immich's own documented minimum under container
+# limits, and 79 MiB observed live. No CPU request or limit: ADR-0002 rejects
+# per-service CPU quotas outright ("There is no admission gate on CPU"; hard
+# quotas "produce predictable numbers by wasting" on a single node where
+# memory, not CPU, is the scarce resource).
 #
 # No nodeAffinity/nodeSelector here: postgres-pv.yaml's static `local` PV
 # already carries the required nodeAffinity (ADR-0014, ADR-0015), which is
@@ -75,9 +77,9 @@ spec:
               mountPath: /dev/shm
           resources:
             requests:
-              memory: 2.5Gi
+              memory: 2Gi
             limits:
-              memory: 2.5Gi
+              memory: 2Gi
       volumes:
         - name: data
           persistentVolumeClaim:
