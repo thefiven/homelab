@@ -1,0 +1,48 @@
+# kube-state-metrics needs its own ServiceAccount and ClusterRole: it reads
+# object state (Deployment status, Job status, PVC phase) across every
+# namespace, which the default ServiceAccount carries no permission for, the
+# same gap victoriametrics-rbac.yaml documents for VictoriaMetrics's own
+# discovery client.
+#
+# Trimmed from upstream's own examples/standard/cluster-role.yaml (v2.20.0),
+# which grants list/watch on some 30 resource types across ten API groups so
+# every collector KSM ships can run. This ClusterRole keeps only the four
+# resources the Deployment's --resources flag actually enables (#268): pods
+# and persistentvolumeclaims from the core group, deployments from apps,
+# jobs from batch. No tokenreviews/subjectaccessreviews either: those back
+# upstream's optional kube-rbac-proxy sidecar for authenticated scraping,
+# not used here, same as every other exporter in this file (plain HTTP,
+# reachable only in-cluster).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kube-state-metrics
+  namespace: observability
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kube-state-metrics
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "persistentvolumeclaims"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kube-state-metrics
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kube-state-metrics
+subjects:
+  - kind: ServiceAccount
+    name: kube-state-metrics
+    namespace: observability
