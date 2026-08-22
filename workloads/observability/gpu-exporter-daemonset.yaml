@@ -9,7 +9,7 @@
 # the series queryable.
 #
 # utkuozdemir/nvidia_gpu_exporter, not NVIDIA's own DCGM exporter: upstream's
-# own README draws the line this platform sits on — "if you run datacenter
+# own README draws the line this platform sits on, "if you run datacenter
 # cards on Kubernetes with the GPU Operator already installed, DCGM-exporter
 # is probably the better fit; this exporter aims at [homelab/consumer GPUs
 # without the Operator stack]". A single consumer RTX card with no GPU
@@ -42,7 +42,7 @@
 # this exporter's own captured metrics (internal/integration/testdata,
 # every GPU and driver combination it ships fixtures for, v1.14.0) that
 # `encoder.stats.sessionCount` exists as an nvidia-smi query-gpu field but
-# no decoder equivalent does — only `utilization.decoder`, a percentage, not
+# no decoder equivalent does, only `utilization.decoder`, a percentage, not
 # a session count. Encoder gets a session count; decoder gets the nearest
 # signal nvidia-smi actually exposes.
 #
