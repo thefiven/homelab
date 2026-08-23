@@ -1,0 +1,81 @@
+# blackbox_exporter (#270): latency/uptime probing, same "Prometheus
+# proxy" shape as snmp-exporter-deployment.yaml - VictoriaMetrics's job
+# passes `target` as a query param (victoriametrics-configmap.yaml), this
+# exporter does the actual probe and answers with Prometheus text.
+#
+# Deployment, not DaemonSet, same reasoning as snmp-exporter-deployment.yaml:
+# this probes a network path, nothing local to node1, so one replica costs
+# less than one per node for the same coverage.
+#
+# Image pinned to a manifest-list digest for linux/amd64, resolved from
+# docker.io/prom/blackbox-exporter:v0.28.0 (latest stable release,
+# 2026-08-23) via the Docker Hub registry API, same pattern every other
+# image in this repository uses.
+#
+# securityContext: upstream's own Dockerfile builds on the same busybox
+# base as gpu-exporter/snmp-exporter with no USER directive, so it stays
+# root by design, same call made for both of those for the same reason.
+# The tcp_connect module this ticket uses needs no elevated capability
+# beyond that default (unlike an icmp module, which would need
+# CAP_NET_RAW), so the other three hardening flags stay in place unweakened.
+#
+# No ServiceAccount, automountServiceAccountToken: false: this exporter
+# never calls the Kubernetes API, same reasoning as the other two exporters
+# in this file.
+#
+# Memory: 64Mi request and limit, both set (ADR-0020's enforced-envelope
+# method), same figure and same reasoning as snmp-exporter-deployment.yaml:
+# a single Go binary holding no dataset between probes.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blackbox-exporter
+  namespace: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: blackbox-exporter
+  template:
+    metadata:
+      labels:
+        app: blackbox-exporter
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: blackbox-exporter
+          image: docker.io/prom/blackbox-exporter:v0.28.0@sha256:43027b43fb785b7c5adc53bd3b5dbc1a258270a2e8aff24f477b45c4e38dac68
+          args:
+            - --config.file=/etc/blackbox_exporter/config.yml
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 9115
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            timeoutSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /etc/blackbox_exporter
+          resources:
+            requests:
+              memory: 64Mi
+            limits:
+              memory: 64Mi
+      volumes:
+        - name: config
+          configMap:
+            name: blackbox-exporter-config

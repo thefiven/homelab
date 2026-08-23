@@ -1,0 +1,21 @@
+# blackbox_exporter's own module config (#270): "latency and uptime between
+# sites" is the operator's stated need, and today nothing measures whether
+# the tailnet path out of this cluster even works - the same path
+# platform-state.md's ninth invariant already depends on by hand
+# (`scripts/ingress-smoke-setup`'s Stage 3) with nothing behind it.
+#
+# tcp_connect, not icmp: ICMP needs CAP_NET_RAW (or root's raw-socket
+# access) inside the container; tcp_connect opens a plain TCP socket, the
+# same privilege level every other exporter in this file already runs
+# with, for the one thing this ticket actually asks: is the path up.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: blackbox-exporter-config
+  namespace: observability
+data:
+  config.yml: |
+    modules:
+      tcp_connect:
+        prober: tcp
+        timeout: 5s

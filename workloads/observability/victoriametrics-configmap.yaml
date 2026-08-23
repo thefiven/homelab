@@ -204,6 +204,57 @@ data:
           - source_labels: [__meta_kubernetes_pod_name]
             target_label: instance
 
+      # snmp-synology (#270): the standard snmp_exporter "Prometheus proxy"
+      # pattern (its own README, Prometheus Configuration section) - a
+      # static target rewritten into __param_target, then a fixed
+      # __address__ pointing at the exporter itself, which does the real
+      # SNMP walk against whatever target it was handed. %{SNMP_TARGET} is
+      # VictoriaMetrics's own environment-variable substitution
+      # (lib/promscrape's envtemplate, unconditional, no flag needed): the
+      # NAS's LAN address is a real designator (ADR-0015) and never lands
+      # in this tracked file, only in the SNMP_TARGET env var the `gitops`
+      # role's task sets on the victoriametrics container from a Secret it
+      # creates outside GitOps, the same mechanism ADR-0009's sops-age
+      # secret already uses for "a real value that must never be
+      # committed."
+      - job_name: snmp-synology
+        metrics_path: /snmp
+        params:
+          module: [synology]
+          auth: [synology_v2]
+        static_configs:
+          - targets: ['%{SNMP_TARGET}']
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: __param_target
+          - source_labels: [__param_target]
+            target_label: instance
+          - target_label: __address__
+            replacement: snmp-exporter.observability.svc.cluster.local:9116
+
+      # blackbox-tailnet (#270): same "Prometheus proxy" pattern as
+      # snmp-synology above, upstream's own README Prometheus Configuration
+      # section. Port 22 (sshd, `base` role): a plain TCP target the
+      # tcp_connect module can dial without a TLS handshake or an HTTP
+      # response to parse, on a port this platform already keeps open.
+      # %{BLACKBOX_TARGET} is node1's own Tailscale IPv4 (`tailscale ip
+      # -4`, the same value the `k3s` role's own --tls-san already uses),
+      # set on this container by the `gitops` role the same way
+      # %{SNMP_TARGET} is - see that job's own comment for the mechanism.
+      - job_name: blackbox-tailnet
+        metrics_path: /probe
+        params:
+          module: [tcp_connect]
+        static_configs:
+          - targets: ['%{BLACKBOX_TARGET}:22']
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: __param_target
+          - source_labels: [__param_target]
+            target_label: instance
+          - target_label: __address__
+            replacement: blackbox-exporter.observability.svc.cluster.local:9115
+
       - job_name: kubelet-volume-stats
         scheme: https
         tls_config:
