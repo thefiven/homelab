@@ -184,9 +184,14 @@ hardware fact this exporter cannot change. Idle baseline, captured on
 node1 2026-08-23 ahead of the 2026-09-26 room move, driver 595.71.05: 35C,
 9.3W, 0% utilisation, ~17 MiB of 8 GiB VRAM used, 0 encoder sessions.
 
-**Accepted by:** ADR-0017.
-**Revisits when:** the Alert-or-Signal ticket decides whether GPU
-temperature joins ADR-0017's Thermal alert category.
+**Resolved by #271/ADR-0022.** GPU temperature joins ADR-0017's Thermal alert
+category; the exact threshold is not yet sourced (unlike the CPU and NVMe
+figures, no vendor number for the RTX 3070 Ti was found this pass), so the
+rule does not fire yet.
+
+**Accepted by:** ADR-0017, ADR-0022.
+**Revisits when:** the GPU thermal threshold is sourced and the `Thermal`
+rule is widened to read it.
 
 ## 10. Every alert depends on two free third-party tiers, on one channel
 
