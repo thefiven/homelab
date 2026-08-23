@@ -302,9 +302,13 @@ with it. Recorded now so the review is a reading rather than a fresh argument.
   false for them specifically.
 - **Two ADR-0002 assumptions remain uninstrumented and one is now measurable.** The 4 GiB ARC and
   the 2 GiB standard slot are still assumptions. The ×5.5 write amplification threshold is still
-  unmeasured, and the media stack's downloads are deliberately kept off the NVMe so that it stays
-  that way: downloads and library both land on the NAS, on one export with a shared root so that
-  hardlinks work.
+  unmeasured as a factor - #270 makes one side of that comparison (the NVMe's own
+  `data_units_written`, per drive, continuously) a live series rather than a one-time
+  `nvme endurance-log` reading, but the other side, ZFS's own logical write volume per dataset,
+  still has no source, so the factor itself is not yet computable from what this platform scrapes.
+  The media stack's downloads are deliberately kept off the NVMe so that stays true regardless:
+  downloads and library both land on the NAS, on one export with a shared root so that hardlinks
+  work.
 - **Hardlinks are load-bearing for more than disk space.** With `downloads/` and `media/` under one
   root, a file is seeding and imported at once as a single copy. Without them the only choices are
   two copies or deleting the torrent, and deleting the torrent is the definition of a hit and run.
@@ -323,6 +327,22 @@ with it. Recorded now so the review is a reading rather than a fresh argument.
   alongside Immich's machine learning. NVIDIA's own support matrix puts the RTX 3070 Ti at 12
   concurrent NVENC sessions, so session count is never the constraint. The 8 GiB of VRAM shared
   with no isolation is, and direct play is the mitigation rather than a preference.
+- **Amendment, 2026-08-23 (#270): the observability envelope's remaining headroom, measured.**
+  SMART (host-side, charged to the 1 GiB host envelope like `node_exporter` itself, not to
+  observability's 3.75 GiB), an SNMP exporter for the DS412+, and a blackbox exporter probing
+  node1's own tailnet address are deployed. Requested memory in `observability` rose from 3286 MiB
+  (this document's own "exactly full" figure) to 3414 MiB against the 3840 MiB (3.75 GiB) line -
+  426 MiB of headroom left. VictoriaMetrics's own `/api/v1/status/tsdb` reports 5453 total series
+  platform-wide; `vm_rows_inserted_total{type="promscrape"}` against a freshly restarted pod's own
+  uptime gives roughly 90 rows/second, and the `state/victoriametrics` ZFS dataset's actual `USED`
+  (14.0 MiB) against its age since creation (2026-08-17) puts real on-disk growth at roughly
+  2.4 MiB/day - three orders of magnitude under the 10 GB/day envelope, not the row-count estimate
+  this figure could otherwise have been computed from, the dataset's own measured compressed size.
+  The SNMP exporter's target resolves correctly (`instance="<NAS LAN address>"` in VictoriaMetrics's
+  own `up` series) but reads `up == 0`: DSM's SNMP service is not yet enabled on the DS412+, a
+  NAS-side console gesture (Control Panel > Terminal & SNMP) this document's own method has never
+  been able to perform from Ansible, the same class of manual gesture the `nfs-client` role's own
+  ACL fix needed once already.
 
 ## Tickets
 
