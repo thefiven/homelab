@@ -9,4 +9,4 @@ Description=Write NVMe SMART/health-log data as a node_exporter textfile (#270)
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/smart-textfile.py
+ExecStart=/usr/local/bin/smart-textfile.py {{ node_exporter_textfile_dir }}/smart.prom

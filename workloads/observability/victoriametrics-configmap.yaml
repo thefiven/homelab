@@ -241,6 +241,14 @@ data:
       # -4`, the same value the `k3s` role's own --tls-san already uses),
       # set on this container by the `gitops` role the same way
       # %{SNMP_TARGET} is - see that job's own comment for the mechanism.
+      #
+      # ponytail: this probes node1's own tailnet address from a pod
+      # scheduled on node1, which proves the tailnet interface serves
+      # traffic but not a genuine cross-site path - there is no second
+      # site yet (the move is 2026-09-26, ADR-0020), and the AC this
+      # ticket actually has is "probes at least one tailnet endpoint," not
+      # "between sites." Point BLACKBOX_TARGET at a second node's tailnet
+      # IP once one exists; nothing else here changes.
       - job_name: blackbox-tailnet
         metrics_path: /probe
         params:

@@ -19,7 +19,7 @@ import subprocess
 import sys
 import tempfile
 
-OUTPUT_PATH = "/var/lib/node_exporter/textfile_collector/smart.prom"
+DEFAULT_OUTPUT_PATH = "/var/lib/node_exporter/textfile_collector/smart.prom"
 
 # NVMe's own unit for data_units_written (NVMe Base Spec 1.4, section
 # 5.14.1.2, Data Units Written): "one unit = 512,000 bytes", not the plain
@@ -78,7 +78,7 @@ def format_metrics(readings: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def main() -> int:
+def main(output_path: str) -> int:
     readings = {}
     for device in sorted(glob.glob("/dev/nvme[0-9]n1")):
         try:
@@ -92,7 +92,7 @@ def main() -> int:
         )
         return 1
 
-    out_dir = os.path.dirname(OUTPUT_PATH)
+    out_dir = os.path.dirname(output_path)
     # Atomic replace: node_exporter's textfile collector scrapes this
     # directory on every /metrics request, and a half-written file would
     # either fail to parse or expose a torn reading.
@@ -101,7 +101,7 @@ def main() -> int:
         with os.fdopen(fd, "w") as f:
             f.write(format_metrics(readings))
         os.chmod(tmp_path, 0o644)
-        os.replace(tmp_path, OUTPUT_PATH)
+        os.replace(tmp_path, output_path)
     except BaseException:
         os.unlink(tmp_path)
         raise
@@ -135,4 +135,10 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--self-check":
         _self_check()
         sys.exit(0)
-    sys.exit(main())
+    # Output path is an optional argv, not the DEFAULT_OUTPUT_PATH constant
+    # directly: the systemd service template passes
+    # node_exporter_textfile_dir explicitly, so this script can never drift
+    # from that Ansible var the way a second hardcoded copy of the path
+    # would.
+    path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_OUTPUT_PATH
+    sys.exit(main(path))

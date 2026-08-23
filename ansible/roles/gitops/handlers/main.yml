@@ -1,0 +1,30 @@
+# Kubernetes never live-reloads a secretKeyRef env var into an already
+# running pod (unlike a mounted volume, which the kubelet resyncs on its
+# own); victoriametrics-deployment.yaml's SNMP_TARGET/BLACKBOX_TARGET only
+# take effect at container start. Without this handler, a secret created
+# or changed by an Ansible run after the pod already exists (the normal
+# bootstrap order: Flux deploys the pod before this role's namespace
+# check can ever pass) would sit unread indefinitely, until some
+# unrelated event happened to restart the pod.
+- name: Restart victoriametrics
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - rollout
+      - restart
+      - deployment/victoriametrics
+      - -n
+      - observability
+  # changed_when: true - a handler only ever runs because something it
+  # was notified by already changed, so the restart it performs is real
+  # every time it fires; not a check-mode/idempotency question the way a
+  # plain command task's changed_when normally answers.
+  changed_when: true
+  # failed_when: false - the namespace check above only proves the
+  # namespace exists, not that Flux has finished applying every object
+  # inside it yet; a fresh bootstrap can still hit this handler before the
+  # Deployment itself lands. Same degrade-quietly call the namespace check
+  # itself makes, not a reason to fail the whole play over a restart that
+  # a Deployment which doesn't exist yet doesn't need anyway.
+  failed_when: false

@@ -100,6 +100,14 @@
     group: root
     mode: "0755"
 
+# notify: Restart smart-textfile timer only, not also "Reload the systemd
+# daemon": the enable/start task right below always runs its own
+# unconditional daemon_reload: true, every single time this role runs, so
+# by the time handlers fire that reload has already happened - the
+# notified handler would only ever be a second, redundant reload of the
+# same state. "Restart smart-textfile timer" still has to be notified
+# separately: `state: started` on an already-running timer is a no-op,
+# it does not pick up a changed unit file the way `state: restarted` does.
 - name: Install the smart-textfile systemd service
   ansible.builtin.template:
     src: smart-textfile.service.j2
@@ -107,9 +115,7 @@
     owner: root
     group: root
     mode: "0644"
-  notify:
-    - Reload the systemd daemon
-    - Restart smart-textfile timer
+  notify: Restart smart-textfile timer
 
 - name: Install the smart-textfile systemd timer
   ansible.builtin.template:
@@ -118,9 +124,7 @@
     owner: root
     group: root
     mode: "0644"
-  notify:
-    - Reload the systemd daemon
-    - Restart smart-textfile timer
+  notify: Restart smart-textfile timer
 
 - name: Enable and start the smart-textfile timer
   ansible.builtin.systemd_service:
@@ -192,6 +196,33 @@
 # host actually has, not a literal 2: the device count itself is what the
 # `find` below discovers, so this stays correct if a future node carries a
 # different number.
+#
+# Forced fresh, not just queried as-is: smart-textfile.timer only fires
+# every node_exporter_smart_interval (30min default), well past
+# VictoriaMetrics's own ~5m instant-query staleness window, so an
+# unforced check here would report the invariant broken on a fully
+# working system most of the time it happens to run - and on a brand new
+# host the timer may not have fired even once yet. `systemctl start` on a
+# oneshot unit blocks until it finishes, so the file is guaranteed current
+# by the time the wait below starts; that wait is for VictoriaMetrics's
+# own 60s scrape_interval (ADR-0002) to actually ingest it; the file
+# updating is not the same event as VictoriaMetrics having scraped it.
+- name: Force a fresh SMART reading before checking freshness
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - start
+      - smart-textfile.service
+  changed_when: false
+  when: k3s_role | default('') == 'server'
+  tags: verify
+
+- name: Wait for VictoriaMetrics's next node-exporter scrape
+  ansible.builtin.wait_for:
+    timeout: 65
+  when: k3s_role | default('') == 'server'
+  tags: verify
+
 - name: Discover NVMe devices
   ansible.builtin.find:
     paths: /dev
@@ -218,13 +249,20 @@
   ansible.builtin.assert:
     that:
       - (node_exporter_smart_query.stdout | from_json).status == 'success'
+      # Every device `find` discovered has its own `device` label in the
+      # result set - a subset check, not a bare count match: two devices
+      # can coincidentally match a count while one of them is a stale
+      # series from a device no longer present and the other's real
+      # replacement has none yet.
       - >-
-        (node_exporter_smart_query.stdout | from_json).data.result | length
-        == node_exporter_nvme_devices.files | length
+        node_exporter_nvme_devices.files | map(attribute='path') | list
+        | difference((node_exporter_smart_query.stdout | from_json).data.result
+        | map(attribute='metric.device') | list) == []
     fail_msg: >-
       smartctl_device_data_units_written_bytes does not have one fresh
-      series per NVMe device ({{ node_exporter_nvme_devices.files | length }}
-      found under /dev). {{ node_exporter_smart_query.stdout }}
+      series per NVMe device ({{ node_exporter_nvme_devices.files
+      | map(attribute='path') | list }} found under /dev).
+      {{ node_exporter_smart_query.stdout }}
     quiet: true
   when: k3s_role | default('') == 'server'
   tags: verify
