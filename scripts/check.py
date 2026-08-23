@@ -12,6 +12,21 @@ STEPS = [
     [str(DIR / "provision-state-pool.py"), "--self-check"],
     [str(DIR / "build-media.py"), "--self-check"],
     [str(DIR / "check-sops-secrets-test.py")],
+    # Deployed onto node1 by the `node-exporter` role, not run from here -
+    # only its pure formatting logic is hardware-free and checkable without
+    # a real NVMe device (#270).
+    [
+        str(
+            DIR
+            / ".."
+            / "ansible"
+            / "roles"
+            / "node-exporter"
+            / "files"
+            / "smart-textfile.py"
+        ),
+        "--self-check",
+    ],
     # Kustomization under workloads/immich parses and builds cleanly (#130),
     # same check kustomize-controller runs against it every reconcile,
     # without needing a live cluster. SOPS ciphertext still parses as valid

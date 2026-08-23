@@ -63,6 +63,39 @@ spec:
             - -retentionPeriod=30d
             - -maxIngestionRate=1000
             - -search.maxUniqueTimeseries=100000
+          # SNMP_TARGET (#270): the NAS's real LAN address, a designator
+          # ADR-0015 never lets into a tracked file. Set here from a Secret
+          # the `gitops` role creates outside GitOps (same mechanism as
+          # ADR-0009's sops-age secret), and referenced from
+          # victoriametrics-promscrape-config.yml's snmp-synology job as
+          # %{SNMP_TARGET} - VictoriaMetrics's own env-var substitution
+          # (lib/envtemplate) leaves an unresolved %{SNMP_TARGET} in place
+          # rather than failing, so this only ever breaks that one scrape
+          # job. `optional: true` for the same reason at one layer out:
+          # every other secretKeyRef in this repository is required
+          # because losing that one CronJob or alert route is an
+          # acceptable, visible failure, but this Secret backs the single
+          # VictoriaMetrics pod every job and every alert scrapes through -
+          # required here would turn "the SNMP secret isn't provisioned
+          # yet" into CreateContainerConfigError for the entire
+          # observability stack, the exact failure class #268 was built to
+          # catch, not something this ticket should risk causing.
+          env:
+            - name: SNMP_TARGET
+              valueFrom:
+                secretKeyRef:
+                  name: snmp-target
+                  key: SNMP_TARGET
+                  optional: true
+            # Same mechanism and same optional: true reasoning as
+            # SNMP_TARGET above; node1's own Tailscale IPv4 rather than the
+            # NAS's LAN address.
+            - name: BLACKBOX_TARGET
+              valueFrom:
+                secretKeyRef:
+                  name: blackbox-target
+                  key: BLACKBOX_TARGET
+                  optional: true
           ports:
             - name: http
               containerPort: 8428

@@ -1,0 +1,16 @@
+# ClusterIP, same reasoning as snmp-exporter-service.yaml: this exporter is
+# reached at a fixed address rewritten into __address__ by
+# victoriametrics-configmap.yaml's probe job (the standard blackbox_exporter
+# "Prometheus proxy" pattern, upstream's own README), not discovered.
+apiVersion: v1
+kind: Service
+metadata:
+  name: blackbox-exporter
+  namespace: observability
+spec:
+  selector:
+    app: blackbox-exporter
+  ports:
+    - name: http
+      port: 9115
+      targetPort: http

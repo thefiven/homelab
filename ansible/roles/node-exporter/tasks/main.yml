@@ -6,9 +6,13 @@
 # download: `prometheus-node-exporter` ships its own systemd unit and
 # already runs as a dedicated `prometheus` user, the same "reuse the distro"
 # choice the `tailscale`/`zfs`/`nfs-client` roles make. Its default
-# collector set — no `ARGS` needed — already includes `hwmon` (`k10temp`,
-# NVMe `Composite`) and `filesystem`, which is every signal ADR-0017 and
-# ADR-0004 need; nothing here has to enable a collector by hand.
+# collector set already includes `hwmon` (`k10temp`, NVMe `Composite`) and
+# `filesystem`, which is every signal ADR-0017 and ADR-0004 need, with no
+# `ARGS` of their own. #270 is the first thing here that does need one: the
+# textfile collector's directory has no default at all (confirmed against
+# the Debian package's own /etc/default/prometheus-node-exporter, `ARGS=""`)
+# and node_exporter itself treats an empty directory flag as "collector
+# disabled", so it must be pointed at one by hand below.
 
 - name: Install the node_exporter package
   ansible.builtin.apt:
@@ -21,6 +25,17 @@
     # rejected home-made textfile-collector scripts outright; installing the
     # package that adds them by default would reopen that on the sly.
     install_recommends: false
+
+# #270: smartctl itself, for the textfile collector below. ADR-0017 rejected
+# the *-collectors package's bundled cron scripts (smartmon, apt) as
+# untested scope creep for a GPU-temperature gap that never needed them;
+# this is a different, purpose-built script reading a different signal
+# (NVMe wear-out, risk register 4) that the accepted set never covered, not
+# a reopening of that rejection.
+- name: Install smartmontools
+  ansible.builtin.apt:
+    name: smartmontools
+    state: present
 
 # ADR-0017: "capped by MemoryMax= in keeping with ADR-0004's rule that
 # every limit is external". A drop-in override, not an edit to the
@@ -51,6 +66,72 @@
     name: prometheus-node-exporter
     enabled: true
     state: started
+
+# group: root, not `prometheus`: the writer (smart-textfile.service, root)
+# and the reader (node_exporter, the `prometheus` user) need this directory
+# in common, and mode 0755 is simpler than a shared group for a directory
+# nothing but this one script ever writes into.
+- name: Create the textfile collector directory
+  ansible.builtin.file:
+    path: "{{ node_exporter_textfile_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Debian's own ARGS="" default (debian/default, /etc/default/prometheus-
+# node-exporter's header: "Set the command-line arguments to pass to the
+# server") is exactly the file this line is meant to fill in - a conffile,
+# not the packaged unit itself, so unlike memory-cap.conf.j2's override
+# directory this one edit survives a package upgrade by design.
+- name: Point node_exporter at the textfile collector directory
+  ansible.builtin.lineinfile:
+    path: /etc/default/prometheus-node-exporter
+    regexp: '^ARGS='
+    line: >-
+      ARGS="--collector.textfile.directory={{ node_exporter_textfile_dir }}"
+  notify: Restart node_exporter
+
+- name: Install the SMART textfile script
+  ansible.builtin.copy:
+    src: smart-textfile.py
+    dest: /usr/local/bin/smart-textfile.py
+    owner: root
+    group: root
+    mode: "0755"
+
+# notify: Restart smart-textfile timer only, not also "Reload the systemd
+# daemon": the enable/start task right below always runs its own
+# unconditional daemon_reload: true, every single time this role runs, so
+# by the time handlers fire that reload has already happened - the
+# notified handler would only ever be a second, redundant reload of the
+# same state. "Restart smart-textfile timer" still has to be notified
+# separately: `state: started` on an already-running timer is a no-op,
+# it does not pick up a changed unit file the way `state: restarted` does.
+- name: Install the smart-textfile systemd service
+  ansible.builtin.template:
+    src: smart-textfile.service.j2
+    dest: /etc/systemd/system/smart-textfile.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart smart-textfile timer
+
+- name: Install the smart-textfile systemd timer
+  ansible.builtin.template:
+    src: smart-textfile.timer.j2
+    dest: /etc/systemd/system/smart-textfile.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart smart-textfile timer
+
+- name: Enable and start the smart-textfile timer
+  ansible.builtin.systemd_service:
+    name: smart-textfile.timer
+    enabled: true
+    state: started
+    daemon_reload: true
 
 # `--tags verify`: proves the eighth platform invariant
 # (docs/reference/platform-state.md), "node_exporter reachable and
@@ -106,6 +187,82 @@
       node_exporter is not reachable and scraped: VictoriaMetrics reports
       no fresh up{job="node-exporter"} == 1 series.
       {{ node_exporter_up_query.stdout }}
+    quiet: true
+  when: k3s_role | default('') == 'server'
+  tags: verify
+
+# #270's own AC: "Consumed data-units-written is queryable for both NVMe,
+# closing #6's open figure". Counted against however many NVMe devices this
+# host actually has, not a literal 2: the device count itself is what the
+# `find` below discovers, so this stays correct if a future node carries a
+# different number.
+#
+# Forced fresh, not just queried as-is: smart-textfile.timer only fires
+# every node_exporter_smart_interval (30min default), well past
+# VictoriaMetrics's own ~5m instant-query staleness window, so an
+# unforced check here would report the invariant broken on a fully
+# working system most of the time it happens to run - and on a brand new
+# host the timer may not have fired even once yet. `systemctl start` on a
+# oneshot unit blocks until it finishes, so the file is guaranteed current
+# by the time the wait below starts; that wait is for VictoriaMetrics's
+# own 60s scrape_interval (ADR-0002) to actually ingest it; the file
+# updating is not the same event as VictoriaMetrics having scraped it.
+- name: Force a fresh SMART reading before checking freshness
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - start
+      - smart-textfile.service
+  changed_when: false
+  when: k3s_role | default('') == 'server'
+  tags: verify
+
+- name: Wait for VictoriaMetrics's next node-exporter scrape
+  ansible.builtin.wait_for:
+    timeout: 65
+  when: k3s_role | default('') == 'server'
+  tags: verify
+
+- name: Discover NVMe devices
+  ansible.builtin.find:
+    paths: /dev
+    patterns: 'nvme[0-9]n1'
+    file_type: any
+  register: node_exporter_nvme_devices
+  tags: verify
+
+- name: Query VictoriaMetrics for the SMART data-units-written series
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - --raw
+      - /api/v1/namespaces/observability/services/victoriametrics:8428/proxy/api/v1/query?query=smartctl_device_data_units_written_bytes
+  register: node_exporter_smart_query
+  changed_when: false
+  check_mode: false
+  when: k3s_role | default('') == 'server'
+  tags: verify
+
+- name: Assert SMART data-units-written is queryable for every NVMe device
+  ansible.builtin.assert:
+    that:
+      - (node_exporter_smart_query.stdout | from_json).status == 'success'
+      # Every device `find` discovered has its own `device` label in the
+      # result set - a subset check, not a bare count match: two devices
+      # can coincidentally match a count while one of them is a stale
+      # series from a device no longer present and the other's real
+      # replacement has none yet.
+      - >-
+        node_exporter_nvme_devices.files | map(attribute='path') | list
+        | difference((node_exporter_smart_query.stdout | from_json).data.result
+        | map(attribute='metric.device') | list) == []
+    fail_msg: >-
+      smartctl_device_data_units_written_bytes does not have one fresh
+      series per NVMe device ({{ node_exporter_nvme_devices.files
+      | map(attribute='path') | list }} found under /dev).
+      {{ node_exporter_smart_query.stdout }}
     quiet: true
   when: k3s_role | default('') == 'server'
   tags: verify

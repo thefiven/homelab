@@ -1,0 +1,12 @@
+# Managed by Ansible, role `node-exporter`. Manual edits are overwritten.
+#
+# Oneshot, triggered by smart-textfile.timer.j2 - no [Install] section,
+# same shape as any timer-driven unit (nothing enables this one directly).
+# Runs as root: smartctl's NVMe health-log query needs it, unlike
+# node_exporter itself which stays on the unprivileged `prometheus` user.
+[Unit]
+Description=Write NVMe SMART/health-log data as a node_exporter textfile (#270)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/smart-textfile.py {{ node_exporter_textfile_dir }}/smart.prom

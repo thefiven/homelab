@@ -8,3 +8,17 @@
 # of that shared gigabyte needs. Like the host envelope itself, this is an
 # estimate to be measured, not a figure derived from this machine.
 node_exporter_memory_max: 128M
+
+# #270: how often smart-textfile.py re-reads both NVMe drives. SMART wear
+# figures (percentage-used, data-units-written) move over weeks under this
+# platform's write volume, not seconds - systemd's own OnUnitActiveSec unit
+# suffixes (`min`), same style the timer template writes back out.
+node_exporter_smart_interval: 30min
+
+# Where smart-textfile.py writes its .prom file and where node_exporter's
+# own --collector.textfile.directory is pointed below. A dedicated
+# directory, not /var/lib/prometheus/node-exporter (the Debian
+# *-collectors package's own path, deliberately not installed here,
+# install_recommends: false below): this platform has one hand-written
+# file, not a directory other cron scripts also drop into.
+node_exporter_textfile_dir: /var/lib/node_exporter/textfile_collector

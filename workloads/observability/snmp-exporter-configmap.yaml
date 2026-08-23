@@ -1,0 +1,128 @@
+# snmp_exporter's own module config for the DS412+ (#270): nothing this
+# platform needs is in the exporter's default snmp.yml (it ships only
+# `apcups`/`arista_sw` from v0.30.1 onward - upstream's own README:
+# "should not be edited by hand [...] use the generator"), and the
+# generator needs a Go toolchain this repository has no other reason to
+# depend on. Hand-written instead, straight against Synology's own MIB
+# files (global.download.synology.com, .../Synology_MIB_File.zip,
+# retrieved 2026-08-23) rather than a third party's rendering of them, and
+# validated with `snmp_exporter --config.file=... --dry-run` (v0.30.1,
+# built from source since no generator binary ships pre-built) before this
+# file was written - the parser accepting it doesn't prove OIDs are
+# semantically right, but does prove the YAML shape (indexes/lookups
+# nesting) matches what the exporter actually expects.
+#
+# Three OID subtrees, all under the IANA-assigned Synology enterprise arc
+# (1.3.6.1.4.1.6574), exactly the three signals the risk register asks
+# for and nothing else the DS412+ also exposes:
+#
+# SYNOLOGY-DISK-MIB (synoDisk, .2): diskTemperature (.2.1.1.6) and
+# diskHealthStatus (.2.1.1.13), one series per physical disk (risk
+# register 3's four same-batch disks). diskID (.2.1.1.2) is a lookup, not
+# its own metric, giving each series a `diskID` label instead of a bare
+# numeric index.
+#
+# SYNOLOGY-RAID-MIB (synoRaid, .3): raidStatus (.3.1.1.3, "volume health"),
+# raidFreeSize and raidTotalSize (.3.1.1.4/.5, "free space" - wire-encoded
+# Counter64 in the MIB, exposed here as `gauge` since free space is not
+# monotonic, only its wire size is). raidName (.3.1.1.2) is the lookup.
+#
+# community: public is DSM's own SNMP service default, left unchanged
+# rather than invented here - risk register 7 already accepts that the
+# LAN, not a per-service credential, is this device's actual security
+# boundary (no gateway, no DNS, "isolation from the internet and nothing
+# else"). The target IP is the real designator (ADR-0015); it never
+# appears in this file, see victoriametrics-configmap.yaml's job and the
+# `gitops` role's secret-creation task instead.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: snmp-exporter-config
+  namespace: observability
+data:
+  snmp.yml: |
+    auths:
+      synology_v2:
+        version: 2
+        community: public
+    modules:
+      synology:
+        walk:
+          - 1.3.6.1.4.1.6574.2.1.1.2
+          - 1.3.6.1.4.1.6574.2.1.1.6
+          - 1.3.6.1.4.1.6574.2.1.1.13
+          - 1.3.6.1.4.1.6574.3.1.1.2
+          - 1.3.6.1.4.1.6574.3.1.1.3
+          - 1.3.6.1.4.1.6574.3.1.1.4
+          - 1.3.6.1.4.1.6574.3.1.1.5
+        metrics:
+          - name: synology_disk_temperature_celsius
+            oid: 1.3.6.1.4.1.6574.2.1.1.6
+            type: gauge
+            help: >-
+              Disk temperature in Celsius (SYNOLOGY-DISK-MIB diskTemperature)
+            indexes:
+              - labelname: diskIndex
+                type: gauge
+            lookups:
+              - labels: [diskIndex]
+                labelname: diskID
+                oid: 1.3.6.1.4.1.6574.2.1.1.2
+                type: DisplayString
+          - name: synology_disk_health_status
+            oid: 1.3.6.1.4.1.6574.2.1.1.13
+            type: gauge
+            help: >-
+              Disk health status (SYNOLOGY-DISK-MIB diskHealthStatus):
+              1=Normal 2=Warning 3=Critical 4=Failing
+            indexes:
+              - labelname: diskIndex
+                type: gauge
+            lookups:
+              - labels: [diskIndex]
+                labelname: diskID
+                oid: 1.3.6.1.4.1.6574.2.1.1.2
+                type: DisplayString
+          - name: synology_raid_status
+            oid: 1.3.6.1.4.1.6574.3.1.1.3
+            type: gauge
+            help: >-
+              RAID status (SYNOLOGY-RAID-MIB raidStatus): 1=Normal
+              11=Degrade 12=Crashed (2-10 are transient repair/migrate/
+              expand states)
+            indexes:
+              - labelname: raidIndex
+                type: gauge
+            lookups:
+              - labels: [raidIndex]
+                labelname: raidName
+                oid: 1.3.6.1.4.1.6574.3.1.1.2
+                type: DisplayString
+          - name: synology_raid_free_bytes
+            oid: 1.3.6.1.4.1.6574.3.1.1.4
+            type: gauge
+            help: >-
+              Free space on the RAID volume, in bytes (SYNOLOGY-RAID-MIB
+              raidFreeSize)
+            indexes:
+              - labelname: raidIndex
+                type: gauge
+            lookups:
+              - labels: [raidIndex]
+                labelname: raidName
+                oid: 1.3.6.1.4.1.6574.3.1.1.2
+                type: DisplayString
+          - name: synology_raid_total_bytes
+            oid: 1.3.6.1.4.1.6574.3.1.1.5
+            type: gauge
+            help: >-
+              Total space on the RAID volume, in bytes (SYNOLOGY-RAID-MIB
+              raidTotalSize)
+            indexes:
+              - labelname: raidIndex
+                type: gauge
+            lookups:
+              - labels: [raidIndex]
+                labelname: raidName
+                oid: 1.3.6.1.4.1.6574.3.1.1.2
+                type: DisplayString

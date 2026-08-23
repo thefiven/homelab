@@ -6,6 +6,20 @@
 # platform's Flux and sops-age checks move here too (its GPU check moved
 # into `nvidia` under #114, and it is deleted entirely by this change).
 #
+# #270 adds two more secrets to the same "real value, never committed"
+# mechanism: `snmp-target` and `blackbox-target`, feeding
+# victoriametrics-deployment.yaml the NAS's LAN address and node1's own
+# Tailscale IPv4 as environment variables, expanded into
+# victoriametrics-configmap.yaml's scrape config via VictoriaMetrics's own
+# %{ENV_VAR} substitution. Same shape as sops-age (a value ADR-0015 never
+# lets into a tracked file, applied with `k3s kubectl ... apply`), simpler
+# in one way (no cross-machine slurp, both source values are already
+# ordinary Ansible vars by the time this role runs) and different in one
+# way (these back a running Deployment's env, not a Secret Flux decrypts,
+# so victoriametrics-deployment.yaml's `optional: true` is what keeps a
+# not-yet-provisioned value from taking the whole pod down instead of a
+# `--tags verify` assertion here).
+#
 # Everything below only runs on the k3s server (node1, ADR-0007: one
 # server, forever) — the same `k3s_role == 'server'` gate the `k3s` role's
 # own server-mode block uses, not `| default('')`: this role runs after
@@ -102,6 +116,111 @@
           register: gitops_sops_age_apply
           changed_when: "'unchanged' not in gitops_sops_age_apply.stdout"
           no_log: true
+
+    # observability's own namespace, not flux-system: these two secrets
+    # are consumed by a pod Flux deploys into `observability`, which does
+    # not exist until kustomize-controller has reconciled that
+    # Kustomization at least once - a real, separate precondition from
+    # "Flux is bootstrapped" above, not redundant with it.
+    - name: Check whether the observability namespace exists
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - get
+          - namespace
+          - observability
+      register: gitops_observability_namespace
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Create or update observability's designator secrets
+      when: gitops_observability_namespace.rc == 0
+      block:
+        - name: Assert the NAS host and node1's Tailscale IPv4 are known
+          ansible.builtin.assert:
+            that:
+              - nfs_client_nas_host is defined
+              - nfs_client_nas_host | string | length > 0
+              - k3s_tailscale_ip is defined
+              - k3s_tailscale_ip.stdout | length > 0
+            fail_msg: >-
+              nfs_client_nas_host (ansible/host_vars/node1_secrets.yml) or
+              k3s_tailscale_ip (set by the `k3s` role, which must run
+              before `gitops` - it does in site.yml) is missing; the
+              snmp-target/blackbox-target secrets need both.
+
+        # Same create --dry-run=client -o yaml | apply -f - idempotency as
+        # the sops-age task above; no cross-machine slurp needed here,
+        # both source values are already ordinary Ansible vars in this
+        # play. no_log: real designators (ADR-0015), kept out of Ansible's
+        # own run output the same way sops-age's identity is.
+        - name: Create or update the snmp-target secret
+          ansible.builtin.shell:
+            executable: /bin/bash
+            cmd: |
+              set -o pipefail
+              k3s kubectl create secret generic snmp-target \
+                --namespace=observability \
+                --from-literal=SNMP_TARGET={{ nfs_client_nas_host }} \
+                --dry-run=client -o yaml \
+              | k3s kubectl apply -f -
+          register: gitops_snmp_target_apply
+          changed_when: "'unchanged' not in gitops_snmp_target_apply.stdout"
+          no_log: true
+          notify: Restart victoriametrics
+
+        - name: Create or update the blackbox-target secret
+          ansible.builtin.shell:
+            executable: /bin/bash
+            cmd: |
+              set -o pipefail
+              k3s kubectl create secret generic blackbox-target \
+                --namespace=observability \
+                --from-literal=BLACKBOX_TARGET={{ k3s_tailscale_ip.stdout }} \
+                --dry-run=client -o yaml \
+              | k3s kubectl apply -f -
+          register: gitops_blackbox_target_apply
+          changed_when: "'unchanged' not in gitops_blackbox_target_apply.stdout"
+          no_log: true
+          notify: Restart victoriametrics
+
+    # `--tags verify`: unlike sops-age's own pair of tasks just below,
+    # this isn't one of platform-state.md's numbered invariants - #270
+    # added no new one - but every other secret this role creates gets an
+    # existence check immediately after its creation task, and skipping it
+    # here would leave the one class of failure this role actually risks
+    # (the observability namespace exists but these two secrets still
+    # don't, for instance because nfs_client_nas_host or k3s_tailscale_ip
+    # was unset the first time this ran) with nothing to ever surface it.
+    - name: Check whether the snmp-target and blackbox-target secrets exist
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - get
+          - secret
+          - snmp-target
+          - blackbox-target
+          - -n
+          - observability
+      register: gitops_designator_secrets
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: gitops_observability_namespace.rc == 0
+      tags: verify
+
+    - name: Assert the snmp-target and blackbox-target secrets are present
+      ansible.builtin.assert:
+        that: gitops_designator_secrets.rc == 0
+        fail_msg: >-
+          snmp-target and/or blackbox-target secret missing in
+          observability: {{ gitops_designator_secrets.stderr }}
+        quiet: true
+      when: gitops_observability_namespace.rc == 0
+      tags: verify
 
     # `--tags verify`: proves the "sops-age secret present" invariant
     # (docs/reference/platform-state.md), replacing the deleted

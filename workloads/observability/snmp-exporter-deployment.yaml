@@ -1,0 +1,87 @@
+# snmp_exporter (#270): the standard route for the DS412+'s free space,
+# disk temperature and RAID status, none of which anything reports today
+# (risk register 3, 7). Runs as a proxy, same shape as gpu-exporter-
+# daemonset.yaml's own model: VictoriaMetrics's job passes `target` as a
+# query param (victoriametrics-configmap.yaml), this exporter does the
+# actual SNMP walk against the NAS and answers with Prometheus text.
+#
+# Deployment, not DaemonSet: unlike node_exporter/gpu-exporter this reads
+# nothing local to node1, it's a network proxy to a device on the LAN, so
+# one replica anywhere in the cluster (which today means the one node
+# there is) is exactly as correct as one per node and costs less.
+#
+# Image pinned to a manifest-list digest for linux/amd64, resolved from
+# docker.io/prom/snmp-exporter:v0.30.1 (latest stable release, 2026-08-23)
+# via the Docker Hub registry API, same pattern every other image in this
+# repository uses.
+#
+# securityContext: upstream's own Dockerfile builds on a busybox base with
+# no USER directive, so it stays root by design, same call gpu-exporter-
+# daemonset.yaml already made for the same reason - runAsNonRoot is left
+# unset rather than fought. readOnlyRootFilesystem costs nothing: the
+# exporter only reads its mounted ConfigMap and answers HTTP, nothing it
+# does writes to disk.
+#
+# No ServiceAccount, automountServiceAccountToken: false: this exporter
+# never calls the Kubernetes API, only the NAS over SNMP and its own HTTP
+# port, same reasoning gpu-exporter-daemonset.yaml gives for the same
+# setting.
+#
+# Memory: 64Mi request and limit, both set (ADR-0020's enforced-envelope
+# method), matching gpu-exporter-daemonset.yaml's own reasoning: a single
+# Go binary holding no dataset between scrapes, no measured baseline yet,
+# a deliberately generous ceiling above the low tens of MiB typical of
+# exporters this shape.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: snmp-exporter
+  namespace: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: snmp-exporter
+  template:
+    metadata:
+      labels:
+        app: snmp-exporter
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: snmp-exporter
+          image: docker.io/prom/snmp-exporter:v0.30.1@sha256:9ad5309a6deb7cbe94b7bc5e5dfa8db7b682c6a3c0fa7c029a7e827e505ef43c
+          args:
+            - --config.file=/etc/snmp_exporter/snmp.yml
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 9116
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            timeoutSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /etc/snmp_exporter
+          resources:
+            requests:
+              memory: 64Mi
+            limits:
+              memory: 64Mi
+      volumes:
+        - name: config
+          configMap:
+            name: snmp-exporter-config

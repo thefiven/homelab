@@ -1,0 +1,15 @@
+# Managed by Ansible, role `node-exporter`. Manual edits are overwritten.
+#
+# {{ node_exporter_smart_interval }}, not node_exporter's own 60s scrape
+# interval: SMART wear figures move over weeks, not seconds, and smartctl
+# is a real disk I/O each run. OnBootSec so a fresh boot gets a reading
+# without waiting a full interval first.
+[Unit]
+Description=Periodic trigger for smart-textfile.service (#270)
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec={{ node_exporter_smart_interval }}
+
+[Install]
+WantedBy=timers.target

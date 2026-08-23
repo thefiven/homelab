@@ -1,0 +1,18 @@
+# ClusterIP, same shape as gpu-exporter's own reasoning for having none at
+# all - except this exporter is reached in-cluster rather than discovered:
+# victoriametrics-configmap.yaml's snmp job rewrites `__address__` to a
+# fixed exporter address (the standard snmp_exporter "Prometheus proxy"
+# pattern, README's own Prometheus Configuration section), so it needs a
+# stable DNS name to rewrite to, not pod discovery.
+apiVersion: v1
+kind: Service
+metadata:
+  name: snmp-exporter
+  namespace: observability
+spec:
+  selector:
+    app: snmp-exporter
+  ports:
+    - name: http
+      port: 9116
+      targetPort: http
