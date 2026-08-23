@@ -40,12 +40,14 @@ same claim.
 
 The first two are routinely used as two intensities of one word. They are not:
 the boundary is action, not severity. See
-[ADR-0004](./docs/adr/0004-victoriametrics-victorialogs-observability.md) and
-[ADR-0018](./docs/adr/0018-ntfy-receiver-healthchecks-witness.md).
+[ADR-0004](./docs/adr/0004-victoriametrics-victorialogs-observability.md),
+[ADR-0017](./docs/adr/0017-thermal-alert-k10temp-nvme.md),
+[ADR-0018](./docs/adr/0018-ntfy-receiver-healthchecks-witness.md) and
+[ADR-0022](./docs/adr/0022-workloaddegraded-and-storage-health-alert-categories.md).
 
 **Alert**:
 A notification that demands a human gesture, costs something if ignored, and
-will not resolve itself. It pushes to the phone. The set is closed at five
+will not resolve itself. It pushes to the phone. The set is closed at six
 categories and grows only by an ADR.
 _Avoid_: warning, notification
 

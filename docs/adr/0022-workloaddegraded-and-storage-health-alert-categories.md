@@ -1,0 +1,293 @@
+---
+status: accepted
+date: 2026-08-23
+tags: [observability, alerting]
+---
+
+# A sixth alert category, `WorkloadDegraded`, and two existing categories broadened
+
+#267 through #270 landed data and deliberately no alert rules, each saying so in
+its own acceptance criteria: "the Alert-or-Signal decision ticket owns" whichever
+of its series earns a phone notification. This ADR is that decision, for every
+series those four tickets actually shipped.
+
+`CONTEXT.md`'s test governs, unchanged: an alert demands a human gesture, costs
+something if ignored, and will not resolve itself. Everything else is a signal,
+read in Grafana when someone thinks to look. The set is closed at five
+categories (ADR-0004, raised from four by ADR-0017) and grows only by an ADR;
+the default below is signal, and the burden of argument is on anything claiming
+otherwise.
+
+## What actually shipped, checked against what was asked
+
+Two of the operator's twenty-one stated needs, named in this ticket's own body,
+have **no series behind them today**, and no exporter ticket landed one:
+
+- **Flux reconciliation drift.** No `flux-system` controller is scraped.
+  `victoriametrics-configmap.yaml` has nine jobs and none of them is Flux; the
+  controllers' own `gotk_reconcile_condition` metric is never collected. Nothing
+  to classify.
+- **Synology cloud-sync job failures.** `snmp-exporter-configmap.yaml`'s
+  `synology` module walks three OID subtrees only, `synoDisk` and `synoRaid`,
+  chosen deliberately as "exactly the three signals the risk register asks for
+  and nothing else the DS412+ also exposes." HyperBackup/Cloud Sync task status
+  is not one of them.
+
+Both need their own scrape source before this ticket's test can even be applied
+to them. Recorded here rather than silently dropped; a follow-up ticket to add
+either is not scoped by this one.
+
+**Repeated OOMKills** is a third near-miss. `kube-state-metrics-deployment.yaml`
+restricts `--resources` to four collectors and `--metric-allowlist` to exactly
+the five series #268 asked for; `kube_pod_container_status_last_terminated_reason`,
+the one metric that would say a restart was an OOMKill rather than any other
+crash, was never on that list. `kubelet-cadvisor`'s keep list
+(`container_memory_rss|container_memory_cache|container_fs_usage_bytes`) does
+not carry `container_oom_events_total` either. What exists today is
+`kube_pod_container_status_restarts_total`, an undifferentiated count. Widening
+either allowlist is a one-line follow-up, not this ADR: without the reason
+label there is nothing to test against `CONTEXT.md`'s three parts yet.
+
+Everything below is classified against a series that is actually queryable on
+node1 today.
+
+## Signals: stays the default
+
+**CPU saturation** (`container_cpu_usage_seconds_total`,
+`node_cpu_usage_seconds_total`, `kubelet-resource`). ADR-0002 already accepted
+this as a deliberate, named hole: "the platform will refuse a workload that does
+not fit in RAM and will accept one that makes it slow." High CPU usually means a
+legitimate transcode or ML job and resolves itself when that job ends, failing
+the "will not resolve itself" test outright. Signal.
+
+**Per-container memory** (`container_memory_rss`, `container_memory_cache`,
+`container_memory_working_set_bytes`). Diagnostic context for reading the alert
+below, not a trigger on its own: no number here says a container is failing,
+only how much room it is using.
+
+**GPU VRAM, utilisation, power draw, encoder sessions**
+(`gpu-exporter-daemonset.yaml`'s `memory.used`, `memory.total`,
+`utilization.gpu`, `power.draw`, `encoder.stats.sessionCount`,
+`utilization.decoder`). ADR-0020 already accepts 8 GiB of VRAM shared with no
+isolation between Immich's machine learning and Plex's hardware transcode,
+"direct play is the mitigation rather than a preference." A VRAM or utilisation
+number does not by itself demand a gesture; it is read when diagnosing a slow
+transcode or a failed inference, which is exactly what a Grafana signal is for.
+
+**SMART wear trend** (`smartctl_device_power_on_hours`,
+`smartctl_device_percentage_used`, `smartctl_device_data_units_written_bytes`).
+These move over weeks (the textfile timer itself is sized on that assumption),
+not minutes. A drive nearing its wear ceiling is worth a periodic glance, not a
+phone push at 3am; it is exactly the kind of weekly-digest material ADR-0020
+names when it says several of the operator's twenty-one needs "are weekly
+summaries, which are Signals by definition." The one SMART series that does
+cross into Alert territory is below.
+
+**Tailnet probe** (`blackbox-tailnet`, `probe_success`). #270's own manifest
+comment names the gap: this probes node1's own tailnet address from a pod
+scheduled on node1, proving the interface serves traffic, "not a genuine
+cross-site path... Point `BLACKBOX_TARGET` at a second node's tailnet IP once
+one exists." There is no second site until the move on 2026-09-26. Alerting on
+a self-probe would mean paging on a failure mode indistinguishable from
+`NodeUnreachable`, which already covers node1 being down. Signal until a real
+second endpoint exists, at which point this is revisited, not re-argued.
+
+**Bare restart count** (`kube_pod_container_status_restarts_total`). Noisy on
+its own: a rolling deployment, a Job's normal completion cycle and a genuine
+crash loop all move this number. The reason-labelled series below is the
+sharper trigger; this stays a Grafana signal for context once an alert has
+already fired.
+
+## Alert: two existing categories broadened, not multiplied
+
+**Storage degraded, extending ADR-0004's "disk space near full, NVMe or NAS".**
+That category was already scoped to the NAS in its own wording; it simply had
+no NAS source until #270. Three series now feed it:
+
+- `synology_disk_temperature_celsius` and `raidFreeSize`/`raidTotalSize`
+  (`snmp-synology`) are the capacity half the category already names.
+- `synoRaid`'s `raidStatus` (volume/RAID health, not free space) and
+  `smartctl_device_smart_passed` (NVMe's own pass/fail self-assessment) are a
+  new failure mode inside the same category: not "getting full" but "failing
+  outright." Both pass the three-part test cleanly on the same asset this
+  category already watches: a degraded RAID on the sole copy of the photo
+  corpus (risk register 3) or a failed NVMe under an unmirrored ZFS pool (risk
+  register 4) demands the same gesture as a full disk: go look, and it does not
+  fix itself. ADR-0017 already collapsed CPU and NVMe over-temperature into one
+  category "on ADR-0004's own criterion: the two share one remedy." The same
+  criterion applies here: capacity and health failures on the same storage
+  layer share a remedy too.
+- `kubelet_volume_stats_available_bytes` (`kubelet-volume-stats`, #267) is a
+  PVC-granularity version of the same "near full" failure the category already
+  names at the host-mountpoint granularity.
+
+**Thermal, extending ADR-0017's fifth category.** `gpu-exporter-daemonset.yaml`
+publishes `temperature.gpu`. Risk register 9 names exactly this decision as the
+open item revisiting when this ticket lands: "the Alert-or-Signal ticket decides
+whether GPU temperature joins ADR-0017's Thermal alert category." It joins, on
+the same reasoning ADR-0017 used to fold CPU and NVMe into one category: a
+cooling failure demands the same gesture regardless of which sensor reports it,
+and risk register 9's own finding is that the case-fan curve is blind to a
+GPU-bound load in exactly the way it would be blind to a third overheating
+component. **The threshold is not set here.** ADR-0017 sourced 85 degrees C from
+the point the `CPU_FAN` curve reaches 100% and 70 degrees C from Kingston's
+datasheet; this ticket has no equivalent sourced figure for the RTX 3070 Ti, and
+inventing one would repeat exactly the mistake ADR-0017's own "Alternatives
+rejected" section priced and refused for the CPU (accepting a throttling point
+as if it were a margin). Sourcing the number is implementation work carried to
+whichever ticket wires the rule, the same way ADR-0004 and ADR-0017 left their
+own exact expressions to implementation; the count decision is made here.
+
+Neither extension changes the alert count. Both broaden which source and which
+failure mode a category already covers, the same kind of amendment ADR-0018
+made to category 3's mechanism without touching its count.
+
+## Alert: a sixth category, `WorkloadDegraded`
+
+Three series describe one failure mode none of the five accepted categories
+covers: a workload that is scheduled but never becomes healthy, and stays that
+way until a human intervenes.
+
+- `kube_pod_container_status_waiting_reason` for `CreateContainerConfigError`,
+  `ImagePullBackOff` and `CrashLoopBackOff` (kube-state-metrics, #268)
+- `kube_deployment_status_replicas_unavailable`, sustained (kube-state-metrics)
+- `kube_persistentvolumeclaim_status_phase` stuck `Pending` (kube-state-metrics)
+
+This is not a hypothetical failure mode being pre-empted. It is the literal
+motivating incident, twice: `cloudflared` sat in `CreateContainerConfigError`
+for 2 days 6 hours across 1231 attempts on a missing secret (#267), and
+`immich-server` reached 11 restarts, both "running unnoticed when ADR-0020 was
+written," found only "by running `kubectl` by hand." Against `CONTEXT.md`'s
+test: it demands a gesture (fix the manifest or the secret feeding it), it costs
+something if ignored (the workload stays down for as long as nobody looks,
+measured here at over two days), and Kubernetes's own retry loop guarantees it
+will not resolve itself, that is precisely what "back off and retry forever"
+means for a config error.
+
+**Why this earns a sixth category rather than folding into one of the five.**
+None of the existing five shares a remedy with it. `NodeUnreachable` is about
+the machine, not one workload on it; `Thermal` and the now-broadened storage
+category are about hardware; `CertificateExpiringSoon` and `Watchdog` are
+narrower still. A misconfigured Deployment does not go away when any of those
+five is fixed.
+
+**Why the noise budget (risk register 10: one ntfy topic, two free tiers) still
+holds.** This is not a routine-firing category. The two incidents that motivate
+it are the only two ADR-0020 found in eight days of the platform running
+unwatched, and both were genuine misconfigurations rather than transient
+blips, which is exactly why `for:` durations belong on the sustained variants
+(`replicas_unavailable`, `Pending`) at implementation time. A category that
+fires on real breakage a handful of times over the platform's life so far does
+not threaten the "sixth notification of the week" failure ADR-0018 names.
+
+`kube_job_status_failed` (#268's fifth series) is deliberately **not** part of
+this category. #268's own text scopes it "for the backup CronJobs", which
+ADR-0018 already alerts on through the Healthchecks witness (daily dump, monthly
+`restic check`). Routing it through `WorkloadDegraded` too would build a second,
+faster detector for a failure the existing backup category already catches by
+design, at the witness's slower cadence. That is a mechanism amendment to
+category 3, the same shape ADR-0018 itself made there, not a new alert and not
+part of this one. Left to the same follow-up as the GPU threshold: implementation,
+not this decision.
+
+## Decision
+
+**Six alert categories.** The five ADR-0004 and ADR-0017 accepted stay, two of
+them broadened in scope and mechanism rather than replaced:
+
+1. `NodeUnreachable`, unchanged.
+2. **Storage degraded** (was "disk space near full, NVMe or NAS"), now also
+   reading Synology RAID/volume health, NVMe SMART pass/fail, and PVC
+   fullness, alongside the host-mountpoint and NAS-capacity sources it
+   already had.
+3. Backup missed its RPO window, unchanged (witness-based, ADR-0018);
+   `kube_job_status_failed` on the backup CronJobs may later become a faster
+   trigger inside this same category, as implementation.
+4. `CertificateExpiringSoon`, unchanged.
+5. **Thermal**, now also reading GPU temperature, threshold to be sourced at
+   implementation time.
+6. **`WorkloadDegraded`**, new: sustained `CrashLoopBackOff` /
+   `ImagePullBackOff` / `CreateContainerConfigError`, sustained unavailable
+   replicas, and PVCs stuck `Pending`.
+
+`CONTEXT.md`'s "closed at five categories" line is updated to six, citing this
+ADR.
+
+Every other series #267-270 shipped is a **signal**: CPU usage, per-container
+memory, GPU VRAM/utilisation/power/encoder sessions, SMART wear trend, the
+tailnet self-probe, and bare restart counts. They live in Grafana as ad hoc
+Explore queries against the already-provisioned VictoriaMetrics datasource,
+the same way ADR-0017's idle-drift signal already does; #160 scoped this
+platform to deliberately carry no curated dashboard, and nothing here reopens
+that. Flux reconciliation drift, Synology cloud-sync failures and
+reason-labelled OOMKills stay unclassified for lack of a source, not by
+decision.
+
+Exact PromQL, `for:` durations and the GPU threshold are implementation, as
+every prior alerting ADR in this set has left its own.
+
+## Alternatives rejected
+
+**A seventh category splitting `WorkloadDegraded`'s three series apart** (one
+for restart loops, one for unavailable replicas, one for stuck PVCs). Rejected
+on ADR-0017's own criterion: all three share the same remedy, going to look at
+the workload, and Alertmanager groups them regardless.
+
+**Treating GPU temperature as its own category** rather than folding it into
+`Thermal`. Rejected for the same reason ADR-0017 refused a separate NVMe
+category: the remedy (go check the machine's cooling) does not depend on which
+sensor spoke.
+
+**Alerting on CPU saturation.** Considered because ADR-0002 names oversubscription
+as an open hole. Rejected because the hole is accepted, not a fault: a
+workload getting slow under contention is the documented consequence of no CPU
+admission gate, not an unresolved failure, and it resolves itself when the
+contending job finishes.
+
+**Alerting on the SMART wear trend directly** (`percentage_used` crossing a
+threshold), rather than leaving it a signal and catching only outright failure
+(`smart_passed`) through the broadened storage category. Rejected because wear
+moves over weeks and a wear percentage alone does not demand tonight's gesture;
+outright failure does, and that path is already an alert.
+
+**Alerting on the tailnet probe now.** Rejected because it does not yet test
+the cross-site path the operator asked for, per #270's own note; alerting on a
+same-host self-probe would duplicate `NodeUnreachable`'s coverage under a
+different name.
+
+**Routing `kube_job_status_failed` through `WorkloadDegraded`.** Considered
+because it is the fastest available signal of a backup CronJob failing.
+Rejected because ADR-0018 already owns backup detection as its own category by
+design (the witness); adding a second, faster path there is an amendment to
+that category's mechanism, not a new alert trigger in this one.
+
+**Leaving `WorkloadDegraded` as a Grafana signal**, on the grounds that the
+operator can check dashboards periodically. Rejected because that is the exact
+failure mode ADR-0020 measured directly: `cloudflared` sat broken for over two
+days precisely because nothing pushed a notification and nobody thought to
+look.
+
+## Consequences
+
+- `CONTEXT.md`'s alerting glossary entry changes from "closed at five
+  categories" to six, citing this ADR alongside ADR-0004 and ADR-0017.
+- Risk register 9's "Revisits when" is resolved: GPU temperature joins
+  `Thermal`, pending a sourced threshold, and the entry's "Accepted by" grows
+  to include this ADR.
+- `vmalert-configmap.yaml` needs a new `WorkloadDegraded` alert and expanded
+  expressions on `DiskSpaceNearFull` (which this ADR renames in intent to
+  "storage degraded", the manifest's actual alert name is implementation) and
+  `Thermal`. None of that ships in this ADR.
+- The GPU thermal threshold is an open sourcing task, the same shape as
+  ADR-0017's own CPU and NVMe research, before its half of the `Thermal`
+  extension can actually fire.
+- Flux reconciliation drift, Synology cloud-sync failures and reason-labelled
+  OOMKills remain outside every accepted alert category, not because they
+  failed this ADR's test but because nothing scrapes them yet. Each needs its
+  own exporter or allowlist change before this test can be applied.
+- Six categories still route through risk register 10's single ntfy topic on
+  two free tiers. Nothing here adds a channel; the noise-budget argument above
+  is why that is judged to still hold, not a reason to revisit ADR-0018.
+- No Grafana dashboard is added or curated by this ADR; every signal named
+  above is read the same ad hoc way the platform's existing signals already
+  are, consistent with #160.
