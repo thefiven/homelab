@@ -54,6 +54,18 @@ LaCie 5big Network 2 considered as a candidate medium was rejected: more
 obsolete than the DS412+ it would have supplemented, and it does not speak
 NFS, which ADR-0010 and the `nfs-client` role are built on.
 
+**Half closed by #270.** The DS412+ published nothing observable of its own
+health before this: no free space, no volume status, no per-disk temperature.
+An SNMP exporter now targets it (`workloads/observability/snmp-exporter-*.yaml`,
+against Synology's own SYNOLOGY-DISK-MIB and SYNOLOGY-RAID-MIB) for exactly
+those three signals, and its target resolves correctly against the NAS's real
+address. It reads `up == 0` as of 2026-08-23: DSM's SNMP service still needs
+enabling on the NAS console itself, a manual gesture this repository's
+automation has never been able to reach (same class as the `nfs-client`
+role's own ACL fix). The correlated-wear risk itself is unchanged - four
+same-batch disks are still the sole copy - this closes the visibility gap
+around it, not the risk.
+
 **Accepted by:** ADR-0012 (the sole-copy risk itself, and the NAS as its
 accepted SPOF), sharpened by #7's correlated-wear finding. The door's
 closure, that no second local copy is planned from owned hardware, is
@@ -74,6 +86,16 @@ together, spending the platform's entire endurance headroom against an
 unmeasured amplification factor for protection against only one of the
 failure modes an unmirrored pool leaves open. Each drive runs as a single
 point of failure for whatever it holds.
+
+**Half closed by #270.** `data_units_written` (converted to bytes) and the
+`percentage_used` wear indicator are now live Prometheus series for both
+drives, via node_exporter's textfile collector - closing #6's own open
+figure, which was a one-time `nvme-cli` reading with nothing behind it since.
+Both read 3% used as of 2026-08-23, matching #6's original baseline. This
+makes the NVMe side of the x5.5 amplification factor continuously queryable;
+the factor itself still isn't computable from what this platform scrapes,
+since ZFS's own logical write volume per dataset has no source yet (see
+ADR-0020's own 2026-08-23 amendment).
 
 **Accepted by:** ADR-0010, informed by #15. ADR-0005 separately accepts the
 sharper edge of the same drives: sudden power loss corrupting NAND with no
