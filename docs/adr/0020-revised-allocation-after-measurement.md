@@ -330,9 +330,11 @@ with it. Recorded now so the review is a reading rather than a fresh argument.
 - **Amendment, 2026-08-23 (#270): the observability envelope's remaining headroom, measured.**
   SMART (host-side, charged to the 1 GiB host envelope like `node_exporter` itself, not to
   observability's 3.75 GiB), an SNMP exporter for the DS412+, and a blackbox exporter probing
-  node1's own tailnet address are deployed. Requested memory in `observability` rose from 3286 MiB
-  (this document's own "exactly full" figure) to 3414 MiB against the 3840 MiB (3.75 GiB) line -
-  426 MiB of headroom left. VictoriaMetrics's own `/api/v1/status/tsdb` reports 5453 total series
+  node1's own tailnet address are deployed. Requested memory in `observability` rose from 3302 MiB
+  (#268's own commit message: 3088 MiB across alertmanager, grafana, victorialogs, victoriametrics
+  and vmalert, including alertmanager's 16 MiB init container, plus its own 150 MiB, plus
+  #269's 64 MiB) to 3430 MiB against the 3840 MiB (3.75 GiB) line - 410 MiB of headroom left.
+  VictoriaMetrics's own `/api/v1/status/tsdb` reports 5453 total series
   platform-wide; `vm_rows_inserted_total{type="promscrape"}` against a freshly restarted pod's own
   uptime gives roughly 90 rows/second, and the `state/victoriametrics` ZFS dataset's actual `USED`
   (14.0 MiB) against its age since creation (2026-08-17) puts real on-disk growth at roughly
