@@ -151,13 +151,20 @@ driven by CPU temperature alone. A purely GPU-bound load, exactly what
 Immich's machine-learning component (2 of its 8 GiB envelope, ADR-0002)
 produces, heats the case while the curve sees a cool CPU and holds the whole
 airflow group at its 25% floor. `k10temp`, the signal the thermal alert
-reads, sees that only second-hand and late; the GPU itself is not in
-`hwmon` at all, so nothing on this platform alerts on it directly.
+reads, sees that only second-hand and late.
+
+**Half closed by #269.** The GPU is not in `hwmon`, but it now has its own
+source: `workloads/observability/gpu-exporter-daemonset.yaml` exports
+temperature, VRAM, utilisation, power draw and encoder session count as a
+Grafana signal. No alert rule reads it yet, that decision belongs to the
+Alert-or-Signal ticket, and the fan curve's blindness to GPU heat is a
+hardware fact this exporter cannot change. Idle baseline, captured on
+node1 2026-08-23 ahead of the 2026-09-26 room move, driver 595.71.05: 35C,
+9.3W, 0% utilisation, ~17 MiB of 8 GiB VRAM used, 0 encoder sessions.
 
 **Accepted by:** ADR-0017.
-**Revisits when:** covering it would need the textfile collector ADR-0004
-does not have, plus new scripts to test, for a component the alert's watched
-circuit does not cool. Not scheduled.
+**Revisits when:** the Alert-or-Signal ticket decides whether GPU
+temperature joins ADR-0017's Thermal alert category.
 
 ## 10. Every alert depends on two free third-party tiers, on one channel
 
