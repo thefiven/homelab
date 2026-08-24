@@ -196,6 +196,13 @@ variables (`_POLLING_INTERVAL`, `_PROPAGATION_TIMEOUT`, `_TTL`, etc.), all of wh
 suffixed `_FILE` to read from a file instead of an inline value
 ([go-acme.github.io/lego/dns/cloudflare](https://go-acme.github.io/lego/dns/cloudflare/)).
 
+**Correction (2026-08-24, real ns3r.fr deployment on node1):** the env var name above is stale
+for the lego build k3s's bundled Traefik v3.7.8 actually ships. The live ACME error named
+`CLOUDFLARE_DNS_API_TOKEN`/`CLOUDFLARE_ZONE_API_TOKEN`, not `CF_DNS_API_TOKEN`/`CF_ZONE_API_TOKEN`
+— lego renamed its Cloudflare env vars at some version between this citation and the one vendored
+here. `ansible/roles/k3s/defaults/main.yml`'s `k3s_traefik_cloudflare_secret_key` now matches the
+live error, not this page's citation.
+
 Same Traefik ACME page also confirms wildcard support natively: "ACME v2 supports wildcard
 certificates," "wildcard certificates can only be generated through a DNS-01 challenge," and notes
 one real limitation: "It is not possible to request a double wildcard certificate for a domain
