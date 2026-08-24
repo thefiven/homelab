@@ -88,15 +88,24 @@ k3s_node_label_key: homelab.local/node
 # Server mode only (#178): name/key of the Kubernetes Secret (kube-system,
 # SOPS+age, Flux-reconciled per #179) holding the scoped Cloudflare API
 # token Traefik's DNS-01 solver reads as an env var. The key doubles as the
-# env var name lego's Cloudflare provider expects
-# (go-acme.github.io/lego/dns/cloudflare), matching this repo's existing
-# secret convention (stringData key == the consumer's env var name, e.g.
-# workloads/backup/secrets/restic-repository.sops.yaml's RESTIC_PASSWORD).
+# env var name lego's Cloudflare provider expects, matching this repo's
+# existing secret convention (stringData key == the consumer's env var
+# name, e.g. workloads/backup/secrets/restic-repository.sops.yaml's
+# RESTIC_PASSWORD).
+#
+# CLOUDFLARE_DNS_API_TOKEN, not CF_DNS_API_TOKEN: the docs/reference/
+# research-ingress-and-public-exposure.md research citation (lego's own
+# Cloudflare provider page) named CF_DNS_API_TOKEN, but the actual bundled
+# lego build's runtime error (node1, real ns3r.fr deployment, 2026-08-24)
+# names CLOUDFLARE_DNS_API_TOKEN/CLOUDFLARE_ZONE_API_TOKEN instead — the doc
+# citation is stale for this Traefik/lego version, the live error is what
+# this role now matches.
+#
 # #179 must scope that single token with both Zone:DNS:Edit and
 # Zone:Zone:Read on the target zone: lego's Cloudflare provider needs the
 # latter to resolve the domain to a Zone ID, and this role only ever wires
-# one token (CF_DNS_API_TOKEN), not lego's optional two-token split
-# (CF_ZONE_API_TOKEN) — a DNS:Edit-only token fails the challenge at the
-# zone-lookup step, not the edit step.
+# one token (CLOUDFLARE_DNS_API_TOKEN), not lego's optional two-token split
+# (CLOUDFLARE_ZONE_API_TOKEN) — a DNS:Edit-only token fails the challenge at
+# the zone-lookup step, not the edit step.
 k3s_traefik_cloudflare_secret_name: cloudflare-api-token
-k3s_traefik_cloudflare_secret_key: CF_DNS_API_TOKEN
+k3s_traefik_cloudflare_secret_key: CLOUDFLARE_DNS_API_TOKEN
