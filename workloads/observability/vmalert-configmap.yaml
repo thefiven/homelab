@@ -239,6 +239,36 @@ data:
                 memory-limit or leak investigation is needed, this will not
                 resolve itself.
 
+          # Flux reconciliation drift (#300, resolving ADR-0022's own gap -
+          # that decision found this need had no source yet). No type="Ready"
+          # selector here: the flux job's own metric_relabel_configs already
+          # keeps only type="Ready" rows before ingestion, so re-adding it
+          # would enforce the same restriction twice, the same double-filter
+          # the kube-state-metrics job's comment above already avoids.
+          # status="False" rather than != 1 on the True row: Unknown
+          # (startup, or the window right after a spec change before the
+          # first reconcile completes) is not the same failure as an object
+          # that reconciled once and then broke, and alerting on it would
+          # page on ordinary object creation. for: 15m reuses the Thermal
+          # GPU/OOMKilled join duration above, longer than both
+          # flux-system Kustomizations' own 10-minute reconcile interval
+          # (gotk-sync.yaml, workloads.yaml) so a single attempt that would
+          # succeed on retry does not fire. Full reasoning and the
+          # cardinality count: ADR-0022 amendment, #300.
+          - alert: WorkloadDegraded
+            expr: gotk_reconcile_condition{status="False"} == 1
+            for: 15m
+            labels:
+              category: workload-degraded
+            annotations:
+              summary: "{{ $labels.kind }}/{{ $labels.name }} in {{ $labels.namespace }} is not reconciling"
+              description: >-
+                gotk_reconcile_condition has reported type="Ready",
+                status="False" for {{ $labels.kind }}/{{ $labels.name }} in
+                {{ $labels.namespace }} for at least 15 minutes - Flux's own
+                retry loop has already tried again in that window, this
+                will not resolve itself.
+
       # ADR-0018's heartbeat. `up{job="node-exporter"} == 1` rather than
       # `vector(1)`: the moment node_exporter stops being scraped (crashed
       # collector, dead node, dead k3s), this series stops existing and the
