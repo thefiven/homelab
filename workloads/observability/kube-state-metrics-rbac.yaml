@@ -13,6 +13,21 @@
 # upstream's optional kube-rbac-proxy sidecar for authenticated scraping,
 # not used here, same as every other exporter in this file (plain HTTP,
 # reachable only in-cluster).
+#
+# kustomizations/gitrepositories (#300): the customResourceState config
+# (kube-state-metrics-crs-configmap.yaml) reads these two Flux CRDs -
+# the only Flux custom resource kinds that exist in this repo, same trim
+# reasoning as the four built-in resources above.
+#
+# customresourcedefinitions (#300): kube-state-metrics's customResourceState
+# reader (CRDiscoverer) list/watches CRD objects at cluster scope to find
+# and track the two above - required "when deploying by manifest" per
+# upstream's own customresourcestate-metrics.md, cluster-scoped because
+# CustomResourceDefinition itself has no namespace. Missing this is a
+# silent failure, not a crash (kubernetes/kube-state-metrics#2098): a
+# logged Forbidden error, kube-state-metrics keeps running, gotk_resource_info
+# just never appears - the exact "up stays green, metric silently absent"
+# shape #300's first attempt already hit once with gotk_reconcile_condition.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -32,6 +47,15 @@ rules:
     verbs: ["list", "watch"]
   - apiGroups: ["batch"]
     resources: ["jobs"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["kustomize.toolkit.fluxcd.io"]
+    resources: ["kustomizations"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["source.toolkit.fluxcd.io"]
+    resources: ["gitrepositories"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
     verbs: ["list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

@@ -11,6 +11,7 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - kube-state-metrics-rbac.yaml
+  - kube-state-metrics-crs-configmap.yaml
   - kube-state-metrics-deployment.yaml
   - kube-state-metrics-service.yaml
   - gpu-exporter-daemonset.yaml

@@ -1,0 +1,75 @@
+# kube-state-metrics's customResourceState config (#300, replacing the
+# gotk_reconcile_condition approach the first attempt at this ticket used).
+#
+# gotk_reconcile_condition does not exist on the Flux versions this cluster
+# runs (kustomize/source-controller v1.9.4, helm-controller v1.6.3,
+# notification-controller v1.9.3) - confirmed live against every controller's
+# raw /metrics output, zero gotk_reconcile_condition series anywhere. Upstream
+# dropped it after 2.1.1 (fluxcd/flux2#4652) and now documents
+# gotk_resource_info, sourced from kube-state-metrics's customResourceState
+# feature reading the CRD's own .status.conditions, not a metric the
+# controllers expose themselves (fluxcd.io/flux/monitoring/metrics/). This
+# file is this repo's version of the config flux2-monitoring-example ships
+# (kube-state-metrics-config.yaml), trimmed the same deliberate way
+# kube-state-metrics-deployment.yaml's --resources/--metric-allowlist already
+# are: two resources, not upstream's full twelve-kind list, because
+# Kustomization and GitRepository are the only Flux custom resources that
+# exist anywhere in this repo (grepped for every `kind:` upstream's example
+# covers - HelmRelease, HelmRepository, HelmChart, OCIRepository, Bucket,
+# Alert, Provider, Receiver, the three image-automation kinds - all zero
+# instances). Add a block here if one of those ever gets used.
+#
+# `ready` extracted from status.conditions[type=Ready].status via
+# kube-state-metrics's own JSONPath-like selector syntax - the exact
+# equivalent of the type="Ready" filter the abandoned scrape-based approach
+# applied at the Prometheus relabeling layer instead. This is an Info metric
+# (kube-state-metrics's own type, same shape as kube_pod_info): value is
+# always 1, current state lives entirely in the labels, and the
+# informer-backed collector updates or removes the row in place on any
+# change - no restart-orphaned stale series the direct-scrape approach's pod
+# name label would have left behind, so `instance` above needs no comment
+# beyond what the kube-state-metrics job in victoriametrics-configmap.yaml
+# already sets.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kube-state-metrics-crs-config
+  namespace: observability
+data:
+  crs-config.yaml: |
+    spec:
+      resources:
+        - groupVersionKind:
+            group: kustomize.toolkit.fluxcd.io
+            version: v1
+            kind: Kustomization
+          metricNamePrefix: gotk
+          metrics:
+            - name: "resource_info"
+              help: "The current state of a Flux Kustomization resource."
+              each:
+                type: Info
+                info:
+                  labelsFromPath:
+                    name: [metadata, name]
+              labelsFromPath:
+                exported_namespace: [metadata, namespace]
+                ready: [status, conditions, "[type=Ready]", status]
+                suspended: [spec, suspend]
+        - groupVersionKind:
+            group: source.toolkit.fluxcd.io
+            version: v1
+            kind: GitRepository
+          metricNamePrefix: gotk
+          metrics:
+            - name: "resource_info"
+              help: "The current state of a Flux GitRepository resource."
+              each:
+                type: Info
+                info:
+                  labelsFromPath:
+                    name: [metadata, name]
+              labelsFromPath:
+                exported_namespace: [metadata, namespace]
+                ready: [status, conditions, "[type=Ready]", status]
+                suspended: [spec, suspend]

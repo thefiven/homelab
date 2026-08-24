@@ -48,6 +48,16 @@
 # Job scrape config lives in victoriametrics-configmap.yaml, same 60s
 # interval as every other target (ADR-0002).
 #
+# customResourceState (#300): kube-state-metrics-crs-configmap.yaml,
+# mounted read-only and pointed to by --custom-resource-state-config-file,
+# adds gotk_resource_info for Flux's Kustomization and GitRepository
+# objects - see that file's own comment for why (gotk_reconcile_condition,
+# the metric #300 first tried to scrape directly off the controllers,
+# doesn't exist on the Flux version this cluster runs). Not
+# --custom-resource-state-only: the four built-in collectors #268 and #299
+# already read from stay enabled, this adds a fifth metric family
+# alongside them rather than replacing anything.
+#
 # Two container ports, matching upstream's own example deployment
 # (examples/standard/deployment.yaml): http-metrics (8080) is the series
 # above; telemetry (8081) is kube-state-metrics's self-metrics, not scraped
@@ -86,7 +96,8 @@ spec:
           image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.20.0@sha256:01171220c7c059afc85034ffe687bfe7249e41c0cc46fbe9a5128503ceee3016
           args:
             - --resources=pods,persistentvolumeclaims,deployments,jobs
-            - --metric-allowlist=kube_pod_container_status_restarts_total,kube_pod_container_status_waiting_reason,kube_deployment_status_replicas_unavailable,kube_job_status_failed,kube_persistentvolumeclaim_status_phase,kube_pod_container_status_last_terminated_reason
+            - --metric-allowlist=kube_pod_container_status_restarts_total,kube_pod_container_status_waiting_reason,kube_deployment_status_replicas_unavailable,kube_job_status_failed,kube_persistentvolumeclaim_status_phase,kube_pod_container_status_last_terminated_reason,gotk_resource_info
+            - --custom-resource-state-config-file=/etc/kube-state-metrics/crs-config.yaml
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -114,3 +125,11 @@ spec:
               memory: 150Mi
             limits:
               memory: 150Mi
+          volumeMounts:
+            - name: crs-config
+              mountPath: /etc/kube-state-metrics
+              readOnly: true
+      volumes:
+        - name: crs-config
+          configMap:
+            name: kube-state-metrics-crs-config
