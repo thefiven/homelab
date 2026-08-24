@@ -330,52 +330,70 @@ look.
   OOMKills remain outside every accepted alert category, not because they
   failed this ADR's test but because nothing scrapes them yet. Each needs its
   own exporter or allowlist change before this test can be applied.
-  **Amendment, 2026-08-24 (#300):** flux-system's controllers are now
-  scraped (`victoriametrics-configmap.yaml`'s `flux` job, role: pod on the
-  `app.kubernetes.io/part-of: flux` label and the `http-prom` port, filtered
-  to `gotk_reconcile_condition{type="Ready"}`). Classified **Alert**, folded
-  into `WorkloadDegraded` rather than a seventh category:
-  `gotk_reconcile_condition{type="Ready",status="False"} == 1` sustained
-  means a Kustomization or HelmRelease is not reconciling, and by the time
-  that has held long enough to alert, Flux's own reconcile loop
+  **Amendment, 2026-08-24 (#300):** the first version of this amendment
+  scraped flux-system's controllers directly for
+  `gotk_reconcile_condition{type="Ready"}`. That metric does not exist on
+  the Flux version this cluster runs (kustomize/source-controller v1.9.4,
+  helm-controller v1.6.3, notification-controller v1.9.3) - confirmed live
+  by reading every controller's raw `/metrics` output from node1 after
+  merge, zero `gotk_reconcile_condition` series anywhere, `up{job="flux"}`
+  green regardless since scraping itself worked fine. Upstream dropped the
+  metric after Flux 2.1.1 (fluxcd/flux2#4652) and now documents
+  `gotk_resource_info`, sourced from kube-state-metrics's
+  `customResourceState` reader against each CRD's own `.status.conditions`,
+  not something the controllers expose themselves
+  (fluxcd.io/flux/monitoring/metrics/). The direct-scrape `flux` job in
+  `victoriametrics-configmap.yaml` is deleted; the replacement is
+  `kube-state-metrics-crs-configmap.yaml` plus the
+  `--custom-resource-state-config-file` flag and RBAC added to
+  `kube-state-metrics-deployment.yaml` / `kube-state-metrics-rbac.yaml` -
+  the existing `kube-state-metrics` scrape job already covers the new
+  metric, no new job. Classified **Alert**, folded into `WorkloadDegraded`
+  rather than a seventh category: `gotk_resource_info{ready="False"} == 1`
+  sustained means a Kustomization or GitRepository is not reconciling, and
+  by the time that has held long enough to alert, Flux's own reconcile loop
   (`interval: 10m0s` on both `flux-system` Kustomizations, gotk-sync.yaml
   and workloads.yaml) has already retried at least once - the same "back off
   and retry forever" reasoning `WorkloadDegraded`'s other three series
   already passed, sharing the same remedy (go look at the object, fix the
   manifest or the source it points at) as `CrashLoopBackOff`/
-  `ImagePullBackOff`. `status="False"` rather than `!= 1` on the `True` row:
-  `Unknown` (present during startup and in the interval right after a spec
-  change, before the first reconcile completes) is not the same failure as
-  an object that reconciled once and then broke, and alerting on it would
-  page on ordinary object creation. `for: 15m` reuses the duration Thermal's
-  GPU expression and the OOMKilled join already settled on (#298, #299),
-  longer than the 10-minute reconcile interval so a single attempt that
-  would succeed on retry does not fire. No `alertmanager-configmap.yaml`
-  change: `category: workload-degraded` is already in the ntfy route's
-  category list and priority mapping from #299, so this expression's alerts
-  reach ntfy at the same `high` priority without further wiring.
+  `ImagePullBackOff`. `ready="False"` rather than `!= "True"`: `Unknown`
+  (present during startup and in the interval right after a spec change,
+  before the first reconcile completes) is not the same failure as an
+  object that reconciled once and then broke, and alerting on it would page
+  on ordinary object creation. `for: 15m` reuses the duration Thermal's GPU
+  expression and the OOMKilled join already settled on (#298, #299), longer
+  than the 10-minute reconcile interval so a single attempt that would
+  succeed on retry does not fire. No `alertmanager-configmap.yaml` change:
+  `category: workload-degraded` is already in the ntfy route's category
+  list and priority mapping from #299, so this expression's alerts reach
+  ntfy at the same `high` priority without further wiring.
   Cardinality: 2 Kustomizations (`gotk-sync.yaml`, `workloads.yaml`) and 1
-  GitRepository (`gotk-sync.yaml`) - 3 objects, counted from the repo itself
-  rather than `kubectl get`: this GitOps repo is the source of truth for
-  every Flux object, and no HelmRelease, HelmRepository, HelmChart,
-  OCIRepository, Bucket, Alert, Provider, or Receiver manifest exists
-  anywhere in it (`gotk-components.yaml` defines their CRDs but creates no
-  instances) - the same "no HelmRepository source exists in this repo yet"
-  precedent `nvidia-device-plugin.yaml`'s own comment already records. Each
-  of the 3 objects contributes exactly 3 series at the `type="Ready"` filter
-  (one gauge row per status value - fluxcd/pkg's `runtime/metrics.
-  Recorder.RecordCondition` loops ConditionTrue/False/Unknown and sets each
-  gauge explicitly, verified against its source 2026-08-24) - a ceiling of
-  9 series, which at ADR-0020's measured
-  ~0.45 KiB/series/day is under 5 KiB/day, negligible against the 10 GB/day
-  envelope. Real queryability
-  and on-disk cardinality are not verified from this branch, the same gap
-  #299's own amendment recorded: GitOps deploys the scrape once this merges
-  to main and the scoped kubeconfig cannot port-forward to check it directly
-  today (confirmed live, `pods/portforward` is forbidden) - a post-merge
-  check is still owed. Synology cloud-sync job failures stay unclassified
-  for the same reason as before: nothing scrapes them yet, unchanged by this
-  ticket.
+  GitRepository (`gotk-sync.yaml`) - 3 objects, counted from the repo
+  itself: this GitOps repo is the source of truth for every Flux object,
+  and no HelmRelease, HelmRepository, HelmChart, OCIRepository, Bucket,
+  Alert, Provider, or Receiver manifest exists anywhere in it
+  (`gotk-components.yaml` defines their CRDs but creates no instances) -
+  the same "no HelmRepository source exists in this repo yet" precedent
+  `nvidia-device-plugin.yaml`'s own comment already records, and why
+  `kube-state-metrics-crs-configmap.yaml` only defines the two kinds that
+  exist. `gotk_resource_info` is kube-state-metrics's Info metric type
+  (`kube_pod_info`'s shape): one row per object regardless of state, not
+  one row per condition-status value the abandoned gauge approach would
+  have produced, so 3 objects is a ceiling of exactly 3 series, at
+  ADR-0020's measured ~0.45 KiB/series/day under 1.5 KiB/day, negligible
+  against the 10 GB/day envelope. Verified live from node1 (`ssh node1`,
+  `k3s kubectl`, no `pods/portforward` restriction there unlike this
+  workstation's scoped kubeconfig, ADR-0019): `up{job="flux"}` was
+  initially absent from the live target list even though the mounted
+  configmap already carried the job - VictoriaMetrics does not hot-reload
+  `-promscrape.config` on file change without an explicit
+  `-promscrape.configCheckInterval` flag (not set here), so the pod needed
+  a restart (`kubectl delete pod`) before the new scrape config took
+  effect; this same reload gap will apply to every future config change to
+  this file, worth a flag in a later ticket. Synology cloud-sync job
+  failures stay unclassified for the same reason as before: nothing scrapes
+  them yet, unchanged by this ticket.
 - Six categories still route through risk register 10's single ntfy topic on
   two free tiers. Nothing here adds a channel; the noise-budget argument above
   is why that is judged to still hold, not a reason to revisit ADR-0018.
