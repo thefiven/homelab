@@ -16,7 +16,9 @@
 # routing needs, and an explicit route says so even if the top-level
 # default ever changes.
 #
-# `ntfy`: the other three rule groups' alerts (disk, thermal, certificate).
+# `ntfy`: the other rule groups' alerts (disk, thermal, certificate,
+# workload-degraded - #299 adds the last of these, ADR-0022's sixth
+# category).
 # webhook_config posts JSON to ntfy's publish schema (ADR-0018), on a
 # `url_file` rather than a hardcoded `url`: Alertmanager's config has no
 # secret-templating in `payload` (it is `{ <string>: <tmpl_string> }` Go
@@ -28,7 +30,9 @@
 # ConfigMap. alertmanager-deployment.yaml's init container builds that file
 # from the secret; `payload` here carries only non-secret, label-derived
 # fields. `priority` follows ntfy's own scale, thermal being the one
-# category where the delay itself is the risk (ADR-0017). ADR-0018's
+# category where the delay itself is the risk (ADR-0017); `workload-degraded`
+# (#299) shares `disk`'s `high` rather than `thermal`'s `urgent` - both are
+# "go fix a resource problem," not a hardware safety margin. ADR-0018's
 # "four of the five categories" also counts backup, which reaches the same
 # ntfy topic through Healthchecks' own integration (#169), not through this
 # Alertmanager route at all.
@@ -38,16 +42,21 @@
 # straight at the healthchecks-pings secret's WATCHDOG_PING_URL key - no
 # init container needed, that secret is already a complete URL. Routed on
 # `alertname` rather than `category` since Watchdog's `category: watchdog`
-# label matches neither the `node` nor the `disk|thermal|certificate`
-# routes, and giving it its own explicit route keeps that independent of
-# route ordering. `repeat_interval: 15m` is ADR-0018's cadence, narrower
-# than the top-level default, since only this route needs to keep posting
-# while nothing has changed - that is the whole heartbeat.
+# label matches neither the `node` nor the ntfy-routed categories below,
+# and giving it its own explicit route keeps that independent of route
+# ordering. `repeat_interval: 15m` is ADR-0018's cadence, narrower than
+# the top-level default, since only this route needs to keep posting while
+# nothing has changed - that is the whole heartbeat.
 #
-# The `disk|thermal|certificate` category list is written once, as a YAML
-# anchor, and reused by inhibit_rules below rather than repeated: the two
-# lists must always name the same categories, and a copy-pasted string in
-# two places is exactly what drifts silently when a category is added.
+# The ntfy category list (disk, thermal, certificate, workload-degraded -
+# #299 added the last of these) is written once, as a YAML anchor, and
+# reused by inhibit_rules below rather than repeated: the two lists must
+# always name the same categories, and a copy-pasted string in two places
+# is exactly what drifts silently when a category is added. `priority`
+# below has no equivalent anchor - Alertmanager's Go templates can't
+# reference a YAML anchor's value - so a category added to this list still
+# needs its own branch there by hand, or it silently falls through to
+# `default` priority; check both when adding a category.
 #
 # inhibit_rules has no `equal:` list: this is a single-node platform, and
 # NodeUnreachable and, say, CertificateExpiringSoon carry no shared label
@@ -81,7 +90,7 @@ data:
             category: node
           receiver: 'null'
         - match_re:
-            category: &ntfy_categories disk|thermal|certificate
+            category: &ntfy_categories disk|thermal|certificate|workload-degraded
           receiver: ntfy
         - match:
             alertname: Watchdog
@@ -96,7 +105,7 @@ data:
             payload:
               title: '{{ .CommonAnnotations.summary }}'
               message: '{{ .CommonAnnotations.description }}'
-              priority: '{{ if eq .CommonLabels.category "thermal" }}urgent{{ else if eq .CommonLabels.category "disk" }}high{{ else }}default{{ end }}'
+              priority: '{{ if eq .CommonLabels.category "thermal" }}urgent{{ else if or (eq .CommonLabels.category "disk") (eq .CommonLabels.category "workload-degraded") }}high{{ else }}default{{ end }}'
               tags: '{{ .CommonLabels.category }}'
       - name: healthchecks-watchdog
         webhook_configs:

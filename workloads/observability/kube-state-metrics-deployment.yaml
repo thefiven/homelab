@@ -16,13 +16,34 @@
 # informers across roughly 30 resource types; namespaces, secrets,
 # configmaps, nodes and the rest stay unwatched.
 #
-# --metric-allowlist then restricts what those four collectors expose to the
-# five series #268 asks for. Each collector emits many metrics beyond these
+# --metric-allowlist then restricts what those four collectors expose to
+# the five series #268 asks for, plus kube_pod_container_status_last_
+# terminated_reason (#299), the reason label kube_pod_container_status_
+# restarts_total never carried: a rolling deployment, a Job's normal
+# completion cycle and a genuine OOMKill all moved that one undifferentiated
+# count identically. Upstream's generator function
+# (internal/store/pod.go, createPodContainerStatusLastTerminatedReasonFamilyGenerator,
+# v2.20.0) only appends a series when a container's
+# LastTerminationState.Terminated is non-nil, and never clears it on the
+# next successful start - one series per container that has terminated at
+# least once (not per pod), present for as long as that container exists
+# regardless of its current health, cheaper up front than restarts_total's
+# one-per-container-always-present series but not self-resetting; the
+# WorkloadDegraded rule below (vmalert-configmap.yaml) accounts for that.
+# Each collector emits many metrics beyond these six
 # (kube_pod_info, kube_pod_labels, kube_deployment_created, ...); the
 # allowlist is an exact-name list, not a resource-level cut, so it is the
 # actual cardinality bound scraped and stored, independent of whichever
 # other metrics a future kube-state-metrics release adds to these same four
 # collectors.
+#
+# kube_pod_container_status_last_terminated_reason carries upstream's own
+# EXPERIMENTAL stability tier (docs/metrics/workload/pod-metrics.md,
+# v2.20.0), unlike the five STABLE series #268 already allowlists - a
+# future upgrade can rename, relabel or drop it without the compatibility
+# guarantee STABLE metrics carry. Check this metric by name against the
+# release notes of whatever kube-state-metrics version this deployment's
+# image is next pinned to.
 #
 # Job scrape config lives in victoriametrics-configmap.yaml, same 60s
 # interval as every other target (ADR-0002).
@@ -65,7 +86,7 @@ spec:
           image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.20.0@sha256:01171220c7c059afc85034ffe687bfe7249e41c0cc46fbe9a5128503ceee3016
           args:
             - --resources=pods,persistentvolumeclaims,deployments,jobs
-            - --metric-allowlist=kube_pod_container_status_restarts_total,kube_pod_container_status_waiting_reason,kube_deployment_status_replicas_unavailable,kube_job_status_failed,kube_persistentvolumeclaim_status_phase
+            - --metric-allowlist=kube_pod_container_status_restarts_total,kube_pod_container_status_waiting_reason,kube_deployment_status_replicas_unavailable,kube_job_status_failed,kube_persistentvolumeclaim_status_phase,kube_pod_container_status_last_terminated_reason
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

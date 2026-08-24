@@ -159,14 +159,15 @@ data:
       # one discovery mechanism for every in-cluster target rather than two.
       # kube-state-metrics-deployment.yaml exposes two container ports
       # (http-metrics, telemetry); the port-name keep below picks the one
-      # that carries the five series this job reads, the same two-step
-      # filter (label first, then port) the traefik job uses for the same
-      # reason - without the port filter, both of this pod's SD entries
-      # would survive and get scraped as two separate targets.
+      # that carries the six series this job reads (five from #268, plus
+      # kube_pod_container_status_last_terminated_reason from #299), the
+      # same two-step filter (label first, then port) the traefik job uses
+      # for the same reason - without the port filter, both of this pod's
+      # SD entries would survive and get scraped as two separate targets.
       #
       # No metric_relabel_configs here: kube-state-metrics-deployment.yaml's
       # own --metric-allowlist flag already restricts what this endpoint
-      # exposes to exactly these five series, so filtering again here would
+      # exposes to exactly these six series, so filtering again here would
       # be the same restriction enforced twice.
       - job_name: kube-state-metrics
         kubernetes_sd_configs:

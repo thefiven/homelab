@@ -175,6 +175,70 @@ data:
                 traefik_tls_certs_not_after reports less than 14 days of
                 validity remaining for {{ $labels.instance }}.
 
+      # ADR-0022's sixth category, `WorkloadDegraded` - the OOMKilled slice
+      # only (#299). `kube_pod_container_status_last_terminated_reason` is
+      # sticky - kube-state-metrics-deployment.yaml's own comment cites the
+      # upstream generator function this follows from - it keeps reporting
+      # a container's last restart reason forever, until the next restart
+      # changes it, so `reason="OOMKilled"` alone would fire on a container
+      # that OOM'd once, weeks ago, and has been healthy since - not the
+      # "repeated OOMKills" this category is meant to catch. Joined on
+      # (namespace, pod, container) against
+      # `kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"}`
+      # (#268, already allowlisted, already scraped): CrashLoopBackOff only
+      # appears after Kubernetes has already backed off repeated failures,
+      # so the join is "currently backing off, and the reason was memory" -
+      # genuinely repeated, not a stale label. Same reason-label join
+      # pattern as the Thermal group's hwmon expressions above.
+      # The join's instant vector does not hold continuously, though: a
+      # container only reports `waiting_reason: CrashLoopBackOff` while it
+      # is actually in that Waiting state, and kubelet's own backoff cycle
+      # (10s, 20s, 40s, ... capped at 5m) interrupts that with brief
+      # Running/Terminated windows shorter than the 60s scrape interval, so
+      # a plain `for: 15m` on the join could keep resetting its pending
+      # timer indefinitely and never fire even on a genuinely repeated
+      # OOMKill. `max_over_time(...[15m:1m])` reads instead: has this join
+      # been true at least once in the trailing 15 minutes, which the
+      # sliding window keeps true for the same 15 minutes after the last
+      # occurrence, so `for: 5m` on top of it - a small buffer against one
+      # flaky scrape, not the detection window itself - is comfortably
+      # satisfied without needing an unbroken 15-minute streak. No
+      # equivalent transient is measured anywhere in this repo, so the
+      # 15-minute lookback reuses the CPU/GPU Thermal duration rather than
+      # inventing an OOM-specific number, the same reasoning ADR-0022 used
+      # for the GPU Thermal expression's own `for:`.
+      #
+      # `kube_pod_container_status_waiting_reason` for
+      # ImagePullBackOff/CreateContainerConfigError,
+      # `kube_deployment_status_replicas_unavailable` and
+      # `kube_persistentvolumeclaim_status_phase` stuck Pending - the other
+      # three series ADR-0022 named for this category - are not wired here:
+      # #299's own scope is the OOMKilled reason label only. Tracked as a
+      # gap, not silently dropped, same as ADR-0022 recorded its own
+      # unscraped candidates - see #303.
+      - name: workload-degraded
+        rules:
+          - alert: WorkloadDegraded
+            expr: >-
+              max_over_time(
+                (
+                  kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}
+                  * on(namespace, pod, container)
+                  kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"}
+                )[15m:1m]
+              ) == 1
+            for: 5m
+            labels:
+              category: workload-degraded
+            annotations:
+              summary: "{{ $labels.container }} in {{ $labels.namespace }}/{{ $labels.pod }} is repeatedly OOMKilled"
+              description: >-
+                {{ $labels.container }} was seen backing off in
+                CrashLoopBackOff with OOMKilled as its last terminated
+                reason at least once in the last 15 minutes - a
+                memory-limit or leak investigation is needed, this will not
+                resolve itself.
+
       # ADR-0018's heartbeat. `up{job="node-exporter"} == 1` rather than
       # `vector(1)`: the moment node_exporter stops being scraped (crashed
       # collector, dead node, dead k3s), this series stops existing and the
