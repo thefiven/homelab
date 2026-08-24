@@ -12,4 +12,11 @@
 # node1 is the k3s control plane (ADR-0007: one server, forever).
 k3s_role: server
 
+# ADR-0011, #178: ns3r.fr is the Cloudflare zone scripts/ingress-secrets-setup
+# (#179) scoped both tokens to. Setting both unblocks the k3s role's
+# conditional HelmChartConfig templating (k3s_traefik_acme_configured) and
+# invariant 9's cert-expiry verify (docs/reference/platform-state.md).
+k3s_traefik_domain: ns3r.fr
+k3s_traefik_acme_email: nsueur29@gmail.com
+
 base_admin_authorized_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEDelC1oe3xlXHMcRuobmsceR9v8ScQ3FiUAWPa28Ac6 node1 bootstrap"
