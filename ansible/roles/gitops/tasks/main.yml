@@ -134,6 +134,7 @@
       changed_when: false
       failed_when: false
       check_mode: false
+      tags: verify
 
     - name: Create or update observability's designator secrets
       when: gitops_observability_namespace.rc == 0
