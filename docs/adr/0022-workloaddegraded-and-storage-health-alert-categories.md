@@ -280,7 +280,10 @@ look.
   `Thermal`. None of that ships in this ADR.
   **Amendment, 2026-08-24 (#299):** the OOMKilled slice of `WorkloadDegraded`
   lands. `kube_pod_container_status_last_terminated_reason` is allowlisted
-  (`kube-state-metrics-deployment.yaml`); querying `cs.LastTerminationState.
+  (`kube-state-metrics-deployment.yaml`), carrying upstream's own
+  EXPERIMENTAL stability tier unlike the five STABLE series #268 already
+  allowlists - flagged in that manifest's own comment as a metric to check
+  by name at the next kube-state-metrics upgrade. Querying `cs.LastTerminationState.
   Terminated != nil` cluster-wide today (`kubectl get pods -A`, this
   workstation's read-mostly kubeconfig, ADR-0019) counts 15 containers with a
   recorded last-terminated reason against 30 containers total - one series
@@ -292,7 +295,9 @@ look.
   repeated OOMKill demands a memory-limit or leak investigation, costs the
   workload staying down, and Kubernetes's own backoff guarantees it will not
   resolve itself - the same three-part reasoning `WorkloadDegraded`'s other
-  two series already passed. Because the metric is sticky (it keeps
+  two series already passed. Because the metric is sticky (upstream's
+  generator function only appends a series, never clears one -
+  `kube-state-metrics-deployment.yaml`'s own comment cites it - so it keeps
   reporting the last reason forever, not just while the container is
   currently failing), the wired expression joins it against
   `kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"}`

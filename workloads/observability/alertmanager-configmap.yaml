@@ -42,16 +42,21 @@
 # straight at the healthchecks-pings secret's WATCHDOG_PING_URL key - no
 # init container needed, that secret is already a complete URL. Routed on
 # `alertname` rather than `category` since Watchdog's `category: watchdog`
-# label matches neither the `node` nor the `disk|thermal|certificate`
-# routes, and giving it its own explicit route keeps that independent of
-# route ordering. `repeat_interval: 15m` is ADR-0018's cadence, narrower
-# than the top-level default, since only this route needs to keep posting
-# while nothing has changed - that is the whole heartbeat.
+# label matches neither the `node` nor the ntfy-routed categories below,
+# and giving it its own explicit route keeps that independent of route
+# ordering. `repeat_interval: 15m` is ADR-0018's cadence, narrower than
+# the top-level default, since only this route needs to keep posting while
+# nothing has changed - that is the whole heartbeat.
 #
-# The `disk|thermal|certificate` category list is written once, as a YAML
-# anchor, and reused by inhibit_rules below rather than repeated: the two
-# lists must always name the same categories, and a copy-pasted string in
-# two places is exactly what drifts silently when a category is added.
+# The ntfy category list (disk, thermal, certificate, workload-degraded -
+# #299 added the last of these) is written once, as a YAML anchor, and
+# reused by inhibit_rules below rather than repeated: the two lists must
+# always name the same categories, and a copy-pasted string in two places
+# is exactly what drifts silently when a category is added. `priority`
+# below has no equivalent anchor - Alertmanager's Go templates can't
+# reference a YAML anchor's value - so a category added to this list still
+# needs its own branch there by hand, or it silently falls through to
+# `default` priority; check both when adding a category.
 #
 # inhibit_rules has no `equal:` list: this is a single-node platform, and
 # NodeUnreachable and, say, CertificateExpiringSoon carry no shared label
