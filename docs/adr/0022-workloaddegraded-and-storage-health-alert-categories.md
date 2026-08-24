@@ -394,6 +394,70 @@ look.
   this file, worth a flag in a later ticket. Synology cloud-sync job
   failures stay unclassified for the same reason as before: nothing scrapes
   them yet, unchanged by this ticket.
+  **Amendment, 2026-08-24 (#301):** all three plausible sources were checked
+  against DSM's own documentation rather than assumed; none clears the bar
+  this pass, so no scrape job ships and no classification is made. SNMP: no.
+  The current Synology SNMP MIB Guide (global.download.synology.com,
+  updated 2026-03-25) is a different download from the raw
+  `Synology_MIB_File.zip` #270's own manifest comment cites, but the same
+  publisher's own enumeration of every OID subtree DSM/SRM/APM support -
+  System, Disk, RAID,
+  UPS, Smart, Services, StorageIO, SpaceIO, FlashCache, iSCSI LUN, Ebox,
+  SHA, NFS, GPUInfo, Port, iSCSI Target, SMB Service, MailPlus - one named
+  module per package that ships SNMP data, the same granularity MailPlus
+  gets its own line at. A full-text read of the guide itself, not a
+  summary, returns zero occurrences of "backup", "task", "job" or "cloud
+  sync" anywhere in it: no module for either package is named, which is
+  what would appear here if one existed, even without decoding the raw
+  `.mib` files bit by bit.
+  The nearest-sounding table, Services MIB (`.1.3.6.1.4.1.6574.6`), is
+  login-session counts per protocol (HTTP/CIFS/AFP/NFS/FTP/SFTP/TELNET/
+  SSH), not task status. Log file: no. `synobackup.log` lives under
+  `/var/log/synolog/`, a system path. DSM's Shared Folder feature, the
+  mechanism this platform's own NFS mounts actually run through
+  (`nfs-client` role, ADR-0010), cannot export system partitions -
+  Synology's own NFS documentation lists this under the feature's stated
+  limitations. Reaching the log needs SSH, a manual gesture in a more
+  invasive class than "Control Panel > Terminal & SNMP" (already the gap
+  ADR-0020 recorded as unreachable from this platform's Ansible), and even
+  with SSH the file would need a translator holding a standing SSH
+  credential to the NAS just to reach node_exporter's textfile format - a
+  larger surface than the API path below for the same information. DSM's
+  own Web API: exists, but not zero-cost. `SYNO.Backup.Task` (Hyper Backup,
+  Active Backup for Business) and a separate `SYNO.CloudSync` namespace are
+  real, documented DSM Web API surfaces (n4s4/synology-api's own supported-
+  APIs listing), and a working open-source Prometheus exporter
+  (raph2i/synology_backup_exporter) already scrapes Hyper Backup /
+  Active Backup / Hyper Backup Vault task status through them - last-
+  successful timestamp, last-attempted timestamp, duration - proving the
+  path is real rather than hypothetical. Three gaps stop it from being
+  sized and shipped this pass, the same "size it, don't assume it" bar
+  #270's own SNMP module was held to: **no anonymous or read-only
+  unauthenticated tier exists at the API layer at all** - every DSM Web API
+  namespace requires a session from `SYNO.API.Auth`'s login method first
+  (Synology's own DSM Login Web API Guide), so "read-only" here means a DSM
+  user account scoped by DSM's own per-package permission model, needing
+  the same credential-siting decision under ADR-0009 every other secret in
+  this repo already goes through, not a flag to flip; **DSM-version
+  compatibility with this specific NAS is unverified** - the DS412+'s own
+  hardware ceiling is DSM 6.2, the last version this model can run
+  (Synology's own compatibility data, unchanged from #270's own dating of
+  the hardware), and the one working exporter found ships a `dsm7` Docker
+  tag with no documented DSM 6 support at all, a gap that can only be
+  closed by live testing against this actual NAS, which this authoring
+  pass cannot reach any more than #270's own SNMP-enable step could;
+  **Cloud Sync is also real, but has no ready-built exporter** -
+  `SYNO.CloudSync`'s own `get_tasks()` method (n4s4/synology-api's
+  `cloud_sync.py`, read directly rather than trusted from its docs page's
+  summary, which undersold it) documents exactly the fields needed per
+  task: `sync_status`, `error`, `error_desc`, `link_status`,
+  `local_sync_path`, `remote_sync_path`. Unlike Hyper Backup, no working
+  open-source exporter scraping it was found, so closing this half means
+  writing a small script against a documented field rather than reusing
+  one, on top of the same auth/credential/DSM-6.2 gaps above. Recorded here
+  rather than shipped blind. A follow-up ticket (#307) scopes both halves
+  through the same DSM API session and the same ADR-0009 credential-siting
+  decision, proven live against this NAS's DSM 6.2 before either ships.
 - Six categories still route through risk register 10's single ntfy topic on
   two free tiers. Nothing here adds a channel; the noise-budget argument above
   is why that is judged to still hold, not a reason to revisit ADR-0018.
