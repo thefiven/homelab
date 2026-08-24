@@ -319,6 +319,45 @@ look.
   main, and the scoped kubeconfig cannot port-forward to check it directly
   today (confirmed live, `pods/portforward` is forbidden for this
   ServiceAccount) - a post-merge check is still owed.
+  **Amendment, 2026-08-24 (#303):** the three remaining series land.
+  `ImagePullBackOff`/`CreateContainerConfigError` join `CrashLoopBackOff`
+  itself (not joined to a last-terminated reason this time) in one
+  `reason=~"..."` expression: the general "container is stuck retrying"
+  failure, covering `CrashLoopBackOff` regardless of cause rather than only
+  the memory-kill slice #299's join already covers. Those two overlap
+  whenever a container is genuinely repeat-OOMKilled - both would then
+  match the same container on a plain reading, and because #299's join
+  drops the `reason` label on its own result, vmalert/Alertmanager would
+  treat the two as different alerts (different label sets) instead of
+  deduplicating, one incident producing two ntfy notifications - caught in
+  review, not shipped. `unless on(namespace, pod, container)` #299's own
+  OOMKilled-join subtracts those containers out of this rule, so a
+  genuinely repeated OOMKill stays solely #299's rule and this one covers
+  every other `CrashLoopBackOff` cause (a bad command, a failing readiness
+  probe, an app panicking on start) without double-firing.
+  Same `max_over_time(...[15m:1m])` / `for: 5m` shape as the OOMKilled rule,
+  for the same documented reason - kubelet's backoff cycle interrupts the
+  Waiting state with brief Running/Terminated windows shorter than the 60s
+  scrape interval, and `ImagePullBackOff` toggles the same reason label
+  against `ErrImagePull` across its own backoff cycle, so a plain `for:`
+  could keep resetting its pending timer and never fire. `replicas_unavailable`
+  and `Pending` need no such join: both are read directly (`> 0` and
+  `{phase="Pending"} == 1`, kube-state-metrics's own StateSet shape for the
+  latter), each with `for: 15m`, reusing the duration the GPU Thermal
+  expression, the OOMKilled join and the Flux rule already settled on
+  (#298, #299, #300) rather than inventing a new one - the "for: durations
+  belong on the sustained variants" line this ADR's own text anticipated.
+  No `alertmanager-configmap.yaml` change: `category: workload-degraded` is
+  already in the ntfy route's category list and priority mapping from #299,
+  so these three rules reach ntfy at the same `high` priority without
+  further wiring. All three series were already allowlisted
+  (`kube-state-metrics-deployment.yaml`, #268) and scraped since #268; this
+  ticket adds rules only, no scrape or allowlist change. Reproducing the
+  `cloudflared` `CreateContainerConfigError` incident (ADR-0020) against the
+  new `reason=~"..."` expression, and on-disk cardinality, are not verified
+  from this branch for the same reason #299's amendment above records: the
+  scoped kubeconfig cannot port-forward to VictoriaMetrics today - a
+  post-merge check against the live cluster is still owed.
 - The GPU thermal threshold is an open sourcing task, the same shape as
   ADR-0017's own CPU and NVMe research, before its half of the `Thermal`
   extension can actually fire.

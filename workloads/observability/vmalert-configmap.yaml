@@ -212,10 +212,10 @@ data:
       # ImagePullBackOff/CreateContainerConfigError,
       # `kube_deployment_status_replicas_unavailable` and
       # `kube_persistentvolumeclaim_status_phase` stuck Pending - the other
-      # three series ADR-0022 named for this category - are not wired here:
-      # #299's own scope is the OOMKilled reason label only. Tracked as a
-      # gap, not silently dropped, same as ADR-0022 recorded its own
-      # unscraped candidates - see #303.
+      # three series ADR-0022 named for this category - are wired below
+      # (#303). All three are already allowlisted
+      # (kube-state-metrics-deployment.yaml, #268) and scraped since #268;
+      # this ticket only adds the rules.
       - name: workload-degraded
         rules:
           - alert: WorkloadDegraded
@@ -271,6 +271,101 @@ data:
                 {{ $labels.exported_namespace }} for at least 15 minutes -
                 Flux's own retry loop has already tried again in that
                 window, this will not resolve itself.
+
+          # kube_pod_container_status_waiting_reason for the other two
+          # reasons ADR-0022 named alongside OOMKilled -
+          # CreateContainerConfigError and ImagePullBackOff - plus
+          # CrashLoopBackOff itself, not joined to a last-terminated reason
+          # this time: this is the general "container is stuck retrying"
+          # failure, not only the memory-kill slice the OOMKilled rule above
+          # already catches. cloudflared's own CreateContainerConfigError
+          # incident (ADR-0020, ADR-0022's literal motivating case: 2 days 6
+          # hours across 1231 attempts on a missing secret) is this rule,
+          # not the OOMKilled one above (#303).
+          # `unless on(namespace, pod, container)` the OOMKilled rule's own
+          # join subtracts out exactly the containers that rule already
+          # alerts on: without it, a genuinely repeated OOMKill would
+          # satisfy both this rule's plain CrashLoopBackOff match and the
+          # OOMKilled join above, and because that join drops the `reason`
+          # label on its own result, vmalert/Alertmanager would treat the
+          # two as different alerts (different label sets) rather than
+          # deduplicating - one incident, two ntfy notifications. Excluding
+          # here keeps CrashLoopBackOff's non-OOM causes (a bad command, a
+          # failing readiness probe, an app that panics on start) covered by
+          # this rule while OOM-caused ones stay solely the other rule's.
+          # Same flapping the OOMKilled rule's own comment already documents
+          # for CrashLoopBackOff applies here too: kubelet's backoff cycle
+          # (10s, 20s, 40s, ... capped at 5m) interrupts the Waiting state
+          # with brief Running/Terminated windows shorter than the 60s
+          # scrape interval, and ImagePullBackOff toggles the same reason
+          # label against ErrImagePull across its own backoff cycle - a
+          # plain `for:` could keep resetting its pending timer and never
+          # fire. Same `max_over_time(...[15m:1m])` / `for: 5m` shape as the
+          # OOMKilled rule above, for the same reason: has this reason been
+          # true at least once in the trailing 15 minutes.
+          - alert: WorkloadDegraded
+            expr: >-
+              max_over_time(
+                (
+                  kube_pod_container_status_waiting_reason{reason=~"CreateContainerConfigError|ImagePullBackOff|CrashLoopBackOff"}
+                  unless on(namespace, pod, container)
+                  (
+                    kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}
+                    * on(namespace, pod, container)
+                    kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"}
+                  )
+                )[15m:1m]
+              ) == 1
+            for: 5m
+            labels:
+              category: workload-degraded
+            annotations:
+              summary: "{{ $labels.container }} in {{ $labels.namespace }}/{{ $labels.pod }} is stuck {{ $labels.reason }}"
+              description: >-
+                {{ $labels.container }} has reported waiting reason
+                {{ $labels.reason }} at least once in the last 15 minutes -
+                Kubernetes's own retry loop keeps backing off and
+                retrying, this will not resolve itself.
+
+          # kube_deployment_status_replicas_unavailable, sustained
+          # (ADR-0022). A plain gauge, not a StateSet like the waiting-
+          # reason series above: it already reads 0 while healthy and only
+          # goes, and stays, nonzero while replicas are actually
+          # unavailable, so no join or max_over_time is needed here.
+          # `for: 15m` reuses the same duration as the GPU Thermal
+          # expression, the OOMKilled join and the Flux rule above (#298,
+          # #299, #300) rather than inventing a new one, per ADR-0022's own
+          # "for: durations belong on the sustained variants... at
+          # implementation time."
+          - alert: WorkloadDegraded
+            expr: kube_deployment_status_replicas_unavailable > 0
+            for: 15m
+            labels:
+              category: workload-degraded
+            annotations:
+              summary: "{{ $labels.deployment }} in {{ $labels.namespace }} has unavailable replicas"
+              description: >-
+                {{ $labels.deployment }} has reported {{ $value }}
+                unavailable replica(s) for at least 15 minutes - this will
+                not resolve itself without intervention.
+
+          # kube_persistentvolumeclaim_status_phase stuck Pending
+          # (ADR-0022). A StateSet metric (one series per phase value,
+          # `phase="Pending"` reads 1 while a PVC sits in that phase, 0
+          # otherwise, kube-state-metrics's own docs), so `== 1` selects it
+          # directly - no join needed. `for: 15m` reuses the same duration
+          # as the two rules above, per the same ADR-0022 line.
+          - alert: WorkloadDegraded
+            expr: kube_persistentvolumeclaim_status_phase{phase="Pending"} == 1
+            for: 15m
+            labels:
+              category: workload-degraded
+            annotations:
+              summary: "{{ $labels.persistentvolumeclaim }} in {{ $labels.namespace }} is stuck Pending"
+              description: >-
+                {{ $labels.persistentvolumeclaim }} has reported phase
+                Pending for at least 15 minutes - this will not resolve
+                itself without intervention.
 
       # ADR-0018's heartbeat. `up{job="node-exporter"} == 1` rather than
       # `vector(1)`: the moment node_exporter stops being scraped (crashed
