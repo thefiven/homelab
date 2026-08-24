@@ -278,6 +278,42 @@ look.
   expressions on `DiskSpaceNearFull` (which this ADR renames in intent to
   "storage degraded", the manifest's actual alert name is implementation) and
   `Thermal`. None of that ships in this ADR.
+  **Amendment, 2026-08-24 (#299):** the OOMKilled slice of `WorkloadDegraded`
+  lands. `kube_pod_container_status_last_terminated_reason` is allowlisted
+  (`kube-state-metrics-deployment.yaml`); querying `cs.LastTerminationState.
+  Terminated != nil` cluster-wide today (`kubectl get pods -A`, this
+  workstation's read-mostly kubeconfig, ADR-0019) counts 15 containers with a
+  recorded last-terminated reason against 30 containers total - one series
+  per container that has restarted at least once, cheaper than
+  `kube_pod_container_status_restarts_total`'s one-per-container-always. At
+  that order of magnitude the write-envelope cost is negligible against the
+  10 GB/day line (ADR-0020's own measured ~0.45 KiB/series/day ratio puts
+  even a worst-case 30 series under 14 KiB/day). Classified **Alert**: a
+  repeated OOMKill demands a memory-limit or leak investigation, costs the
+  workload staying down, and Kubernetes's own backoff guarantees it will not
+  resolve itself - the same three-part reasoning `WorkloadDegraded`'s other
+  two series already passed. Because the metric is sticky (it keeps
+  reporting the last reason forever, not just while the container is
+  currently failing), the wired expression joins it against
+  `kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"}`
+  rather than firing on the reason label alone, so a container that OOM'd
+  once and has been healthy since does not alert; `vmalert-configmap.yaml`'s
+  own comment carries the full expression and sourcing. `ImagePullBackOff`/
+  `CreateContainerConfigError` waiting reasons, sustained
+  `replicas_unavailable`, and PVCs stuck `Pending` - the rest of what this
+  ADR named for `WorkloadDegraded` - remain unwired, this ticket's scope was
+  the OOMKilled reason label only, tracked separately as #303.
+  `alertmanager-configmap.yaml`'s route,
+  inhibit target and ntfy priority template are extended to carry
+  `category: workload-degraded` alongside `disk`/`thermal`/`certificate`;
+  without that, a fired alert would have reached the default `null` receiver
+  and never notified, the exact failure this whole alert line exists to
+  prevent. Real queryability and on-disk cardinality (VictoriaMetrics's own
+  `/api/v1/status/tsdb`, same method as the #270 amendment above) are not
+  verified from this branch: GitOps deploys the change once this merges to
+  main, and the scoped kubeconfig cannot port-forward to check it directly
+  today (confirmed live, `pods/portforward` is forbidden for this
+  ServiceAccount) - a post-merge check is still owed.
 - The GPU thermal threshold is an open sourcing task, the same shape as
   ADR-0017's own CPU and NVMe research, before its half of the `Thermal`
   extension can actually fire.

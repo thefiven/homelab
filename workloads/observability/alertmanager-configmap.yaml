@@ -16,7 +16,9 @@
 # routing needs, and an explicit route says so even if the top-level
 # default ever changes.
 #
-# `ntfy`: the other three rule groups' alerts (disk, thermal, certificate).
+# `ntfy`: the other rule groups' alerts (disk, thermal, certificate,
+# workload-degraded - #299 adds the last of these, ADR-0022's sixth
+# category).
 # webhook_config posts JSON to ntfy's publish schema (ADR-0018), on a
 # `url_file` rather than a hardcoded `url`: Alertmanager's config has no
 # secret-templating in `payload` (it is `{ <string>: <tmpl_string> }` Go
@@ -28,7 +30,9 @@
 # ConfigMap. alertmanager-deployment.yaml's init container builds that file
 # from the secret; `payload` here carries only non-secret, label-derived
 # fields. `priority` follows ntfy's own scale, thermal being the one
-# category where the delay itself is the risk (ADR-0017). ADR-0018's
+# category where the delay itself is the risk (ADR-0017); `workload-degraded`
+# (#299) shares `disk`'s `high` rather than `thermal`'s `urgent` - both are
+# "go fix a resource problem," not a hardware safety margin. ADR-0018's
 # "four of the five categories" also counts backup, which reaches the same
 # ntfy topic through Healthchecks' own integration (#169), not through this
 # Alertmanager route at all.
@@ -81,7 +85,7 @@ data:
             category: node
           receiver: 'null'
         - match_re:
-            category: &ntfy_categories disk|thermal|certificate
+            category: &ntfy_categories disk|thermal|certificate|workload-degraded
           receiver: ntfy
         - match:
             alertname: Watchdog
@@ -96,7 +100,7 @@ data:
             payload:
               title: '{{ .CommonAnnotations.summary }}'
               message: '{{ .CommonAnnotations.description }}'
-              priority: '{{ if eq .CommonLabels.category "thermal" }}urgent{{ else if eq .CommonLabels.category "disk" }}high{{ else }}default{{ end }}'
+              priority: '{{ if eq .CommonLabels.category "thermal" }}urgent{{ else if or (eq .CommonLabels.category "disk") (eq .CommonLabels.category "workload-degraded") }}high{{ else }}default{{ end }}'
               tags: '{{ .CommonLabels.category }}'
       - name: healthchecks-watchdog
         webhook_configs:
