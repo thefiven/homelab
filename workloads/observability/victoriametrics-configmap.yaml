@@ -269,6 +269,62 @@ data:
           - target_label: __address__
             replacement: blackbox-exporter.observability.svc.cluster.local:9115
 
+      # flux (#300): role: pod, same discovery mechanism as kube-state-metrics
+      # and gpu-exporter above. One job for all four controllers
+      # (source-controller, kustomize-controller, helm-controller,
+      # notification-controller) rather than four jobs: they share the
+      # app.kubernetes.io/part-of: flux pod label and the same http-prom
+      # (8080) metrics port name (gotk-components.yaml, confirmed live
+      # against the running pods - this kustomization deploys no
+      # image-reflector/image-automation controller for the label+port keep
+      # to catch), so one label-then-port filter selects exactly this set,
+      # the same two-step shape the traefik job above uses for the same
+      # reason.
+      #
+      # This is the source #271/ADR-0022 found missing for "Flux
+      # reconciliation drift", one of the operator's twenty-one stated needs
+      # (ADR-0020) that ADR-0022 could not classify for lack of a scrape.
+      # gotk_reconcile_condition carries one series per (kind, name,
+      # namespace, type, status) tuple - upstream's recorder function writes
+      # all three ConditionTrue/False/Unknown rows per condition type, only
+      # one of them =1 at a time (fluxcd/pkg's runtime/metrics.Recorder.
+      # RecordCondition, which loops ConditionTrue/False/Unknown and sets
+      # each gauge explicitly, verified against its source 2026-08-24) - so
+      # filtered to type="Ready" only, the condition that
+      # actually says whether a Kustomization or HelmRelease is currently
+      # healthy; every other condition type (Reconciling, Stalled, ...) is
+      # dropped rather than ingested and never queried, same as every other
+      # deliberate keep list in this file.
+      #
+      # `instance` from app.kubernetes.io/component rather than the pod
+      # name: these four Deployments are cluster singletons identified by
+      # controller, not by node (unlike gpu-exporter's DaemonSet above,
+      # which is correctly node-scoped) - the pod name is not stable across
+      # a restart (crash, reschedule, upgrade) while the component label is,
+      # so keying on it avoids orphaning a fresh set of series on every
+      # controller restart.
+      - job_name: flux
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [flux-system]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_part_of]
+            regex: flux
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            regex: http-prom
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+            target_label: instance
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: 'gotk_reconcile_condition'
+            action: keep
+          - source_labels: [type]
+            regex: 'Ready'
+            action: keep
+
       - job_name: kubelet-volume-stats
         scheme: https
         tls_config:
