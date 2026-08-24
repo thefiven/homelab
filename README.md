@@ -13,9 +13,9 @@ bootstrap, and each workload's SOPS+age-encrypted manifests live under its
 own `workloads/*/secrets/`. Four workloads already run on top of it: Immich
 (server, Postgres, Redis, machine-learning), observability
 (VictoriaMetrics, VictoriaLogs, Grafana, vmalert, Alertmanager), ingress
-(cloudflared, currently failing on a missing secret pending a domain
-purchase, #162) and backup (two CronJobs, with completed runs on the
-cluster). Every ticket touching the physical node or NAS is
+(Traefik ACME wildcard cert + cloudflared, proven end to end against a
+throwaway hostname, #162) and backup (two CronJobs, with completed runs on
+the cluster). Every ticket touching the physical node or NAS is
 human-in-the-loop; acceptance is checked against the real hardware, never
 simulated.
 
