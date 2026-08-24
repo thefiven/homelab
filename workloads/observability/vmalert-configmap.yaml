@@ -88,6 +88,25 @@ data:
       # second, always-1 metric, not as a label on the temperature series
       # itself. Thresholds, durations and the "absolute only, no idle
       # baseline" design are ADR-0017's own decision, not chosen here.
+      #
+      # Third expression, GPU (#298, resolving risk register 9 and
+      # ADR-0022's deferred threshold): nvidia_smi_temperature_gpu, from
+      # gpu-exporter-daemonset.yaml (#269), not a node_hwmon series - the
+      # GPU is not in hwmon at all (ADR-0017). 93C is NVIDIA's own published
+      # "Maximum GPU Temperature" for the RTX 3070 Ti
+      # (nvidia.com/en-us/geforce/graphics-cards/30-series/rtx-3070-3070ti/,
+      # checked 2026-08-24), the same role Kingston's datasheet ceiling
+      # plays for the NVMe expression above: the one figure the vendor
+      # publishes for this card, not a forum-estimated throttle point.
+      # `for: 15m` matches the CPU expression, not the NVMe one. ADR-0017's
+      # own reason for that split is transient length, not which component
+      # self-protects ("both components protect themselves" either way,
+      # ADR-0017): the CPU's documented transient is a sub-second BIOS
+      # spike, the NVMe's are this platform's own multi-minute excursions (a
+      # ZFS scrub, the monthly restore check). No equivalent GPU-load
+      # transient is measured anywhere in this repo - risk register 9 only
+      # captured an idle baseline (35C) - so 15m is the CPU's figure reused
+      # rather than a GPU-specific number invented to fill that gap.
       - name: thermal
         rules:
           - alert: Thermal
@@ -119,6 +138,18 @@ data:
                 An NVMe drive's Composite sensor has read above 70C for 30
                 minutes, past Kingston's warranted operating ceiling
                 (ADR-0017).
+          - alert: Thermal
+            expr: nvidia_smi_temperature_gpu > 93
+            for: 15m
+            labels:
+              category: thermal
+              sensor: gpu
+            annotations:
+              summary: "GPU temperature above 93C on {{ $labels.instance }}"
+              description: >-
+                nvidia_smi_temperature_gpu has read above 93C for 15 minutes,
+                NVIDIA's published Maximum GPU Temperature for the RTX
+                3070 Ti (ADR-0022, #298).
 
       # ADR-0004's fourth category. Was dormant by construction (#160's scope
       # note: the ingress spec that scrapes Traefik hadn't shipped yet, so

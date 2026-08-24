@@ -281,6 +281,10 @@ look.
 - The GPU thermal threshold is an open sourcing task, the same shape as
   ADR-0017's own CPU and NVMe research, before its half of the `Thermal`
   extension can actually fire.
+  **Amendment, 2026-08-24 (#298):** sourced at 93 degrees C, NVIDIA's own
+  published Maximum GPU Temperature for the RTX 3070 Ti, and wired into
+  `vmalert-configmap.yaml`'s `Thermal` alert. Risk register 9 records the
+  detail; this bullet's premise no longer holds.
 - Flux reconciliation drift, Synology cloud-sync failures and reason-labelled
   OOMKills remain outside every accepted alert category, not because they
   failed this ADR's test but because nothing scrapes them yet. Each needs its

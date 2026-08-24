@@ -59,8 +59,8 @@
 # group_by, Alertmanager's own default batches every alert matching a route
 # into one notification group, and the ntfy payload's `.CommonAnnotations`/
 # `.CommonLabels` are the *intersection* across that group, not any one
-# alert's own values. The two Thermal rules (cpu Tctl, nvme Composite,
-# vmalert-configmap.yaml) share `alertname: Thermal` but carry different
+# alert's own values. The three Thermal rules (cpu Tctl, nvme Composite, gpu
+# temperature - #298, vmalert-configmap.yaml) share `alertname: Thermal` but carry different
 # `summary`/`description`, so both crossing threshold together would empty
 # the templated title and message - the docs' own documented fix is
 # `'...'`, which stops aggregating and gives each alert its own
