@@ -185,13 +185,21 @@ node1 2026-08-23 ahead of the 2026-09-26 room move, driver 595.71.05: 35C,
 9.3W, 0% utilisation, ~17 MiB of 8 GiB VRAM used, 0 encoder sessions.
 
 **Resolved by #271/ADR-0022.** GPU temperature joins ADR-0017's Thermal alert
-category; the exact threshold is not yet sourced (unlike the CPU and NVMe
-figures, no vendor number for the RTX 3070 Ti was found this pass), so the
-rule does not fire yet.
+category; the exact threshold was not yet sourced at that point (unlike the
+CPU and NVMe figures, no vendor number for the RTX 3070 Ti had been found).
+
+**Closed by #298.** NVIDIA's own product page for the RTX 3070 Ti publishes
+"Maximum GPU Temperature (in C): 93" under its Founders Edition thermal
+specs, the same role Kingston's datasheet ceiling plays for the NVMe
+expression. `vmalert-configmap.yaml`'s `Thermal` alert now reads
+`nvidia_smi_temperature_gpu > 93` for 15 minutes, alongside `k10temp` and
+NVMe `Composite` (that file's own comment carries the full sourcing and
+duration reasoning).
 
 **Accepted by:** ADR-0017, ADR-0022.
-**Revisits when:** the GPU thermal threshold is sourced and the `Thermal`
-rule is widened to read it.
+**Revisits when:** the case-fan group starts reading GPU heat rather than
+only `CPU_FAN` - a separate, unmitigated hardware fact (above) carried to
+#99, not reopened by this entry's own closure.
 
 ## 10. Every alert depends on two free third-party tiers, on one channel
 
